@@ -912,11 +912,19 @@ class RaporPenceresi(tk.Toplevel):
         self.minsize(700, 420)
         alt = tk.Frame(self, bg=R["zemin"])
         alt.pack(side="bottom", fill="x", padx=12, pady=10)
-        dugme(alt, "PDF olarak kaydet", lambda: uyg.rapor_kaydet(bilgi, "pdf", self), ana=True).pack(side="left")
+        dugme(alt, "PDF'i aç / kaydet", lambda: uyg.rapor_kaydet(bilgi, "pdf", self), ana=True).pack(side="left")
         dugme(alt, "Excel olarak kaydet", lambda: uyg.rapor_kaydet(bilgi, "xlsx", self)).pack(side="left", padx=(8, 0))
         dugme(alt, "Kapat", self.destroy).pack(side="right")
-        tk.Label(alt, text="Dosya, dönemin 02_Raporlar klasörüne kaydedilir ve açılır.", bg=R["zemin"], fg=R["gri"],
-                 font=(YAZI, 8)).pack(side="left", padx=12)
+        kayit = bilgi.get("kayit") or {}
+        if kayit.get("yol"):                        # rapor düzenlenirken PDF kendiliğinden kaydedildi: tıklanınca açılır
+            k_yazi = tk.Label(alt, text="PDF kaydedildi: …\\" + "\\".join(Path(kayit["yol"]).parts[-2:]), bg=R["zemin"], fg=R["mavi"],
+                              cursor="hand2", font=(YAZI, 8, "underline"))
+            k_yazi.bind("<Button-1>", lambda e: uyg._ac(kayit["yol"]))
+        else:
+            k_yazi = tk.Label(alt, text=("PDF kaydedilemedi: " + kayit["hata"][:70]) if kayit.get("hata")
+                              else "Dosya, dönemin 02_Raporlar klasörüne kaydedilir ve açılır.", bg=R["zemin"],
+                              fg=R["kirmizi"] if kayit.get("hata") else R["gri"], font=(YAZI, 8))
+        k_yazi.pack(side="left", padx=12)
         tuval = tk.Canvas(self, bg=R["zemin"], highlightthickness=0)
         kaydir = ttk.Scrollbar(self, orient="vertical", command=tuval.yview)
         tuval.configure(yscrollcommand=kaydir.set)
@@ -949,8 +957,12 @@ class RaporPenceresi(tk.Toplevel):
             bant = tk.Frame(ic, bg=R["kirmizi"])
             bant.pack(fill="x", padx=14, pady=(6, 0))
             tk.Label(bant, text=r["bant"][1], bg=R["kirmizi"], fg="white", font=(YAZI, 16, "bold")).pack(side="right", padx=12, pady=7)
-            tk.Label(bant, text=r["bant"][0], bg=R["kirmizi"], fg="white", font=(YAZI, 11, "bold"), anchor="w", justify="left",
-                     wraplength=560).pack(side="left", padx=12, pady=7)
+            sol_b = tk.Frame(bant, bg=R["kirmizi"])
+            sol_b.pack(side="left", padx=12, pady=7)
+            tk.Label(sol_b, text=r["bant"][0], bg=R["kirmizi"], fg="white", font=(YAZI, 11, "bold"), anchor="w", justify="left",
+                     wraplength=560).pack(anchor="w")
+            tk.Label(sol_b, text=r["bant"][2], bg=R["kirmizi"], fg="white", font=(YAZI, 10, "bold"), anchor="w", justify="left",
+                     wraplength=560).pack(anchor="w", pady=(3, 0))
         kutular = tk.Frame(ic, bg=R["zemin"])
         kutular.pack(fill="x", padx=14, pady=(6, 2))
         for n, (et, deger, stil) in enumerate(r["ozet"]):

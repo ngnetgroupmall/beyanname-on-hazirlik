@@ -1,5 +1,5 @@
 {
-  "surum": "2026.11.20.6",
+  "surum": "2026.11.20.7",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
@@ -10,14 +10,14 @@
     "emukellef.py": "c9c2d5e74c130f0400815284ff1db8a0693372df1ab627e26d1f3aedac627156",
     "giris_kasasi.py": "dd5548bc6b2a7a4ced92f51935a90c00cbe9337cd1161f01a20afeae20bea992",
     "guncelle.py": "2fbfe997152448031e1e3d5c525f558bc15f0ff400319efc17b0ea121da0fbb2",
-    "kdv_kar.py": "c570e81c519bdc490ce05331f7cf7f1e8112dbe09532bff822e52130bad0484e",
+    "kdv_kar.py": "4a9e8a94b32a2acaf8bc6c18930bc536fb832f400c0fc1e6f10e2048b29719e9",
     "komut.py": "4a42560582e2d9d3c665c193795f0f77dd31da54f0c9140141e839b2ba2fd996",
     "logo_veri.py": "10ca632f2952864a59579714baa4c12b3538446e20f617d4180b8aefc18bcf7e",
     "luca.py": "8435ce75bdc59976b3c4fcadf705902f5d4060d9816dcb698d86be90a9bae976",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "64040045f5f44b2af78ce22752ce820a7b65f1d9f553acdeea718a008b2ad796",
-    "onhazirlik.py": "6a8b1cee321c9d6c1b855c84a95d075efe4d1d23e11676c5abd699b32475db28",
+    "onhazirlik.py": "506a5837c6a1e6ca82c47e390e466f9f9bea2c909208e20e9265311c3fbebeaa",
     "ozet.py": "d54a03d5bad8eed8865cf094801f453894187112dfac8c91f7662830037582db",
-    "tarayici.py": "31958ea4976543376a0f1b71a19ac3fbd83b33868d36bd0bb329d6b027209358"
+    "tarayici.py": "37e0d77c89eeb455e705bcf1ef2075fb9d1ccdcb60cec4d95a0c2d1b1f49424b"
   }
 }

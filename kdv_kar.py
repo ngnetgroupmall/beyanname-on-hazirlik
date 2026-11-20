@@ -24,8 +24,11 @@ Kâr/zarar: firma raporundaki algoritma (scripts/stok_gecici.py; kullanıcı kar
          beyanname tescil no). Diğer 159 stok sayılmaz.
   Stok yetmiyorsa (kullanıcı isteği 20.11.2026): Senaryo 2'deki kârdan kayıtlı stokun TAMAMI satış maliyeti olarak düşülür
              (elde başka maliyet yok) -> kalan kâr + KKEG = matrah -> vergi. Raporun en üstünde kırmızı bantta gösterilir.
-  Farklar: dönem kapanış hesapları (690/691/692) hareket görmüşse kâr hesabına katılmaz (uyarı verilir); vergi oranı %25 varsayılır,
-  önceki dönem geçici vergileri ve mahsuplar düşülmez (rapor bunu belirtir).
+             Aynı bölümde: verginin hiç çıkmaması için ne kadar KDV HARİÇ gider / mal faturası gerektiği de yazılır
+             (matrah − 193 / vergi oranı; mal faturasının maliyete atılacağı varsayılır).
+  Peşin ödenen vergiler (kullanıcı isteği 20.11.2026): 193'ün (ödenen geçici vergi, kesintiler) net borç bakiyesi hesaplanan vergiden
+             düşülür -> ödenecek vergi. Açılıştan gelen ya da dönem içinde alacak çalışan 193 için uyarı verilir.
+  Farklar: dönem kapanış hesapları (690/691/692) hareket görmüşse kâr hesabına katılmaz (uyarı verilir); vergi oranı %25 varsayılır.
 """
 import base64
 import calendar
@@ -339,6 +342,19 @@ def kar_zarar(sat, yil, ay, oran_v=VERGI_ORANI):
     if not personel_var:
         uyari.append(f"PERSONEL FİŞİ YOK: {AYLAR[ay - 1]} {yil} için ücret / 335 hareketi bulunamadı. Bordro fişi kesilmemişse rapordaki kâr "
                      "olduğundan yüksek görünür.")
+    # Peşin ödenen vergiler: 193 net borç bakiyesi (ödenen geçici vergi + kesintiler) hesaplanan vergiden düşülür
+    pesin_net = top(lambda s: s.ana == "193")
+    pesin = max(pesin_net, S0)
+    p_acilis = sum((s.net for s in sat if s.ana == "193" and "AÇILIŞ" in s.acik.upper()), S0)
+    p_alacak = sum((s.alacak for s in sat if s.ana == "193"), S0)
+    if p_acilis:
+        uyari.append(f"193'te açılıştan gelen {tl(p_acilis)} TL var (önceki yıl 371'e devredilmemiş olabilir); peşin ödenen vergiye dahil "
+                     "edildi, kontrol edin.")
+    if p_alacak:
+        uyari.append(f"193 dönem içinde {tl(p_alacak)} TL alacak çalışmış (iade, mahsup ya da 371'e devir olabilir); vergiden düşülen tutar "
+                     f"193'ün net bakiyesidir ({tl(pesin)} TL).")
+    if pesin_net < 0:
+        uyari.append(f"193 alacak bakiyesi veriyor ({tl(pesin_net)} TL); peşin ödenen vergi 0 alındı, hesabı kontrol edin.")
     s1 = None
     if oran_son is not None:
         smm_tah = (ns_maliyetsiz * oran_son).quantize(D("0.01"), rounding=ROUND_HALF_UP)
@@ -365,15 +381,17 @@ def kar_zarar(sat, yil, ay, oran_v=VERGI_ORANI):
         maliyet = max(stok, S0)
         kar3 = kar_mevcut - maliyet
         matrah3 = max(kar3 + kkeg, S0)
-        tum_stok = {"maliyet": maliyet, "kar": kar3, "matrah": matrah3,
-                    "vergi": (matrah3 * oran_v).quantize(D("0.01"), rounding=ROUND_HALF_UP)}
+        vergi3 = (matrah3 * oran_v).quantize(D("0.01"), rounding=ROUND_HALF_UP)
+        # verginin hiç çıkmaması için gereken KDV hariç gider / mal faturası: matrah, peşin ödenen verginin karşıladığı matraha inmeli
+        gereken = max(matrah3 - (pesin / oran_v), S0).quantize(D("0.01"), rounding=ROUND_HALF_UP)
+        tum_stok = {"maliyet": maliyet, "kar": kar3, "matrah": matrah3, "vergi": vergi3, "gereken": gereken}
     if any(u.startswith("STOK YETERSİZ") for u in uyari) and s159 > 0:
         uyari.append(f"Not: 159 Verilen Sipariş Avansları hesabında ithalat dışı {tl(s159)} TL var (stok sayılmadı). Mallar teslim alındıysa "
                      f"153'e aktarılmalıdır; aktarılırsa stok {tl(stok + s159)} TL olur.")
     return {"stok": stok, "stok_ana": stok_ana, "stok_ith": stok_ith, "ith": ith, "s159": s159, "ns_ytd": ns_ytd,
             "ns_maliyetsiz": ns_maliyetsiz, "ns_maliyetli": ns_maliyetli, "smm_kayitli": smm_kayitli, "son_mal": son_mal,
             "donemler": donemler, "oran_kum": oran_kum, "gelir6": gelir6, "gider7": gider7, "kar_maliyetsiz": kar_mevcut,
-            "kkeg": kkeg, "s1": s1, "kalan2": kalan2, "matrah2": matrah2, "vergi2": vergi2, "tum_stok": tum_stok, "oran_v": oran_v, "uyarilar": uyari,
+            "kkeg": kkeg, "s1": s1, "kalan2": kalan2, "matrah2": matrah2, "vergi2": vergi2, "tum_stok": tum_stok, "pesin": pesin, "oran_v": oran_v, "uyarilar": uyari,
             "yetersiz1": bool(s1 and s1["kalan"] < 0), "yetersiz2": bool(kar_mevcut > 0 and kalan2 < 0)}
 
 
@@ -433,25 +451,44 @@ def rapor_kur(firma, ay, yil, donem_bas, mizan_ay, mizan_yil, kebir_satirlari, n
                      tl(abs(kar)) + " TL", "yesil" if kar > 0 else "kalin"))
         yetersiz = z["yetersiz1"] or z["yetersiz2"]
         ozet.append(("Stok" + (" — YETERSİZ !" if yetersiz else ""), tl(z["stok"]) + " TL", "kirmizi" if yetersiz else ""))
+        pesin = z["pesin"]
+
+        def vergi_satirlari(vergi):
+            """Hesaplanan vergi -> peşin ödenen (193) -> ödenecek vergi / peşin fazlası satırları ve ödenecek satırının sırası (0'dan)."""
+            net = vergi - pesin
+            return [[f"Hesaplanan vergi ({yuzde(z['oran_v'])})", tl(vergi)],
+                    ["Peşin ödenen vergiler (193: ödenen geçici vergi ve kesintiler)", tl(-pesin)],
+                    ["ÖDENECEK VERGİ" if net > 0 else ("Ödenecek vergi yok — peşin ödenen vergi fazlası" if net < 0 else "Ödenecek vergi yok"),
+                     tl(abs(net))]], net
+
         vergi = s1["vergi"] if s1 else z["vergi2"]
-        if vergi > 0:                               # zararda da 689 matrah çıkarabilir (kâr + KKEG > 0)
-            ozet.insert(len(ozet) - 1, ("Tahmini vergi (%25, 689 dahil)", tl(vergi) + " TL", "kalin"))
+        if vergi > 0 or pesin > 0:                  # zararda da 689 matrah çıkarabilir (kâr + KKEG > 0)
+            net = vergi - pesin
+            sen = "Senaryo 1" if s1 else "Senaryo 2"
+            ozet.insert(len(ozet) - 1, (f"Ödenecek vergi — {sen} (%25; 689 dahil, 193 düşülmüş)" if net > 0
+                                        else f"Ödenecek vergi yok — {sen}" + (" (193 fazlası)" if net < 0 else ""),
+                                        tl(abs(net)) + " TL", "kalin"))
         stok_et = "Stok (153 + ithalat 159)" if z["stok_ith"] else "Kayıtlı stok (159 hariç)"
         ts = z["tum_stok"]
         if ts:
-            bant = ("STOK YETERSİZ ! Kayıtlı stokun tamamı maliyete atılırsa ÇIKACAK VERGİ", tl(ts["vergi"]) + " TL")
+            vs, net3 = vergi_satirlari(ts["vergi"])
+            bant = ("STOK YETERSİZ ! Kayıtlı stokun tamamı maliyete atılırsa ÖDENECEK VERGİ (193 düşülmüş)", tl(max(net3, S0)) + " TL",
+                    f"Verginin hiç çıkmaması için gereken KDV hariç gider / mal faturası: {tl(ts['gereken'])} TL" if ts["gereken"] > 0
+                    else "Peşin ödenen vergi (193) yeterli; ek gider / mal faturası gerekmiyor.")
             bolumler.insert(0, {
                 "baslik": f"Stok yetersiz — tüm stok maliyete atılırsa (dönem başı – {donem} sonu, kümülatif)", "kolonlar": ["Kalem", "Tutar (TL)"],
                 "satirlar": [[("Kâr" if z["kar_maliyetsiz"] > 0 else "Zarar") + " (maliyet atılmadan; Senaryo 2)", tl(z["kar_maliyetsiz"])],
                              [stok_et + " — tamamı satış maliyeti olarak", tl(-ts["maliyet"])],
                              ["Kalan " + ("kâr" if ts["kar"] > 0 else "zarar"), tl(ts["kar"])],
                              ["Kanunen kabul edilmeyen giderler (689, 681)", tl(z["kkeg"])],
-                             ["Vergi matrahı", tl(ts["matrah"])],
-                             [f"ÇIKACAK VERGİ ({yuzde(z['oran_v'])})", tl(ts["vergi"])]],
-                "stil": {2: "kalin", 5: "kirmizi"},
+                             ["Vergi matrahı", tl(ts["matrah"])]] + vs
+                + [["VERGİ ÇIKMAMASI İÇİN GEREKEN KDV HARİÇ GİDER / MAL FATURASI", tl(ts["gereken"])]],
+                "stil": {2: "kalin", 7: "kirmizi" if net3 > 0 else "yesil", 8: "kirmizi" if ts["gereken"] > 0 else "yesil"},
                 "not": "Stok, satışların maliyetini karşılamıyor: maliyet olarak en fazla kayıtlı stokun tamamı yazılabilir. Bu durumda "
-                       "kalan kâr üzerinden çıkacak vergi budur (kurumlar vergisi oranı %25; önceki dönem geçici vergileri ve mahsuplar "
-                       "düşülmemiştir). Alış / ithalat kaydı eksikse önce onlar tamamlanmalıdır."})
+                       "kalan kâr üzerinden çıkacak vergi budur (kurumlar vergisi oranı %25). Son satır: ödenecek verginin sıfırlanması "
+                       "için bu kadar KDV hariç gider ya da (satılıp maliyete atılacak) mal alış faturası kaydedilmelidir"
+                       + (f"; 193 hiç dikkate alınmazsa matrahı sıfırlamak için {tl(ts['matrah'])} TL gerekir" if pesin > 0 else "")
+                       + ". Alış / ithalat kaydı eksikse önce onlar tamamlanmalıdır."})
         kum = f"dönem başı – {donem} sonu, kümülatif"
         if z["donemler"]:
             bolumler.append({"baslik": "Önceki dönemlerde satış maliyeti oranı",
@@ -466,26 +503,24 @@ def rapor_kur(firma, ay, yil, donem_bas, mizan_ay, mizan_yil, kebir_satirlari, n
                                           [f"Tahmini satış maliyeti ({yuzde(s1['oran'])})", tl(s1["smm"])],
                                           ["TAHMİNİ TİCARİ " + ("KÂR" if s1["kar"] > 0 else "ZARAR"), tl(s1["kar"])],
                                           ["Kanunen kabul edilmeyen giderler (689, 681)", tl(z["kkeg"])],
-                                          ["Tahmini vergi matrahı", tl(s1["matrah"])],
-                                          [f"Hesaplanan vergi ({yuzde(z['oran_v'])})", tl(s1["vergi"])],
-                                          [stok_et, tl(z["stok"])],
-                                          ["KALAN STOK", tl(s1["kalan"])]],
-                             "stil": {2: "yesil" if s1["kar"] > 0 else "kalin", 7: "kirmizi" if z["yetersiz1"] else "kalin"},
+                                          ["Tahmini vergi matrahı", tl(s1["matrah"])]] + vergi_satirlari(s1["vergi"])[0]
+                             + [[stok_et, tl(z["stok"])],
+                                ["KALAN STOK", tl(s1["kalan"])]],
+                             "stil": {2: "yesil" if s1["kar"] > 0 else "kalin", 7: "kalin", 9: "kirmizi" if z["yetersiz1"] else "kalin"},
                              "not": ("STOK YETERSİZ ! " if z["yetersiz1"] else "") + "Tahmindir: fiili stok sayımı ve amortisman dikkate "
-                                    "alınmamıştır. Vergi, kurumlar vergisi oranıyla (%25) hesaplanmıştır; önceki dönemlerde ödenen geçici "
-                                    "vergi ve mahsuplar düşülmemiştir."})
+                                    "alınmamıştır. Vergi, kurumlar vergisi oranıyla (%25) hesaplanmış; 193'teki peşin ödenen vergiler "
+                                    "(ödenen geçici vergi, kesintiler) düşülmüştür."})
         bolumler.append({"baslik": f"Senaryo 2 — maliyet atılmadan ({kum})", "kolonlar": ["Kalem", "Tutar (TL)"],
                          "satirlar": [["6'lı hesaplar: gelirler − kayıtlı maliyet ve giderler", tl(z["gelir6"])],
                                       ["7'li hesaplar: henüz yansıtılmamış giderler", tl(-z["gider7"])],
                                       [("KÂR" if z["kar_maliyetsiz"] > 0 else "ZARAR") + " (maliyet atılmadan)", tl(z["kar_maliyetsiz"])],
                                       ["Kanunen kabul edilmeyen giderler (689, 681)", tl(z["kkeg"])],
-                                      ["Vergi matrahı (kâr + kanunen kabul edilmeyen giderler)", tl(z["matrah2"])],
-                                      [f"Hesaplanan vergi ({yuzde(z['oran_v'])})", tl(z["vergi2"])],
-                                      [stok_et, tl(z["stok"])],
-                                      ["Kâr stoktan düşülürse KALAN STOK", tl(z["kalan2"])]],
-                         "stil": {2: "yesil" if z["kar_maliyetsiz"] > 0 else "kalin", 7: "kirmizi" if z["yetersiz2"] else "kalin"},
-                         "not": ("Vergi, kurumlar vergisi oranıyla (%25) hesaplanmıştır; önceki dönem geçici vergileri ve mahsuplar "
-                                 "düşülmemiştir. ") + ("STOK YETERSİZ ! " if z["yetersiz2"] else ("Zarar var; stoktan düşülecek kâr yok. " if z["kar_maliyetsiz"] <= 0
+                                      ["Vergi matrahı (kâr + kanunen kabul edilmeyen giderler)", tl(z["matrah2"])]]
+                         + vergi_satirlari(z["vergi2"])[0]
+                         + [[stok_et, tl(z["stok"])],
+                            ["Kâr stoktan düşülürse KALAN STOK", tl(z["kalan2"])]],
+                         "stil": {2: "yesil" if z["kar_maliyetsiz"] > 0 else "kalin", 7: "kalin", 9: "kirmizi" if z["yetersiz2"] else "kalin"},
+                         "not": ("Vergi, kurumlar vergisi oranıyla (%25) hesaplanmış; 193'teki peşin ödenen vergiler düşülmüştür. ") + ("STOK YETERSİZ ! " if z["yetersiz2"] else ("Zarar var; stoktan düşülecek kâr yok. " if z["kar_maliyetsiz"] <= 0
                                                                            else "Stok bu kârı karşılıyor. "))
                                 + f"159 hesabındaki ithalat dışı tutar ({tl(z['s159'])} TL) stok sayılmamıştır."})
         if z["stok_ith"]:
@@ -495,7 +530,7 @@ def rapor_kur(firma, ay, yil, donem_bas, mizan_ay, mizan_yil, kebir_satirlari, n
                              "stil": {len(z["ith"]) + 1: "kalin"},
                              "not": "İthalat olduğu muhasebe kayıtlarıyla (ithal KDV içeren gümrük fişi, beyanname no) doğrulanan 159 alt "
                                     "hesapları stok sayılmıştır."})
-    return {"firma": firma, "donem": donem, "uretim": datetime.now().strftime("%d.%m.%Y %H:%M"), "ozet": ozet, "bolumler": bolumler,
+    return {"firma": firma, "donem": donem, "uretim": datetime.now().strftime("%d.%m.%Y"), "ozet": ozet, "bolumler": bolumler,
             "uyarilar": uyarilar, "odenecek": bool(k["odenecek"]), "bant": bant}
 
 
@@ -517,10 +552,12 @@ def html(r, logo=None):
          "font-size:9.5pt}tr{page-break-inside:avoid}.bas{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}",
          ".logo{max-height:62px;max-width:150px;object-fit:contain}.bant{background:#b42318;color:#fff;padding:9px 14px;margin:8px 0 2px;",
          "display:flex;justify-content:space-between;align-items:center;font-size:11pt;font-weight:700}.bant b{font-size:15pt;white-space:nowrap}",
+         ".bant-alt{font-size:10pt;font-weight:600;margin-top:4px}",
          "</style></head><body>",
          f"<div class='bas'><div><h1>KDV ve Kâr / Zarar Durumu</h1><div class='alt'>{e(r['firma'])} · {e(r['donem'])} · düzenleme "
          f"{e(r['uretim'])} · kaynak: Luca mizan ve Defteri Kebir</div></div>{resim}</div>"
-         + (f"<div class='bant'><span>{e(r['bant'][0])}</span><b>{e(r['bant'][1])}</b></div>" if r.get("bant") else "")
+         + (f"<div class='bant'><div><span>{e(r['bant'][0])}</span><div class='bant-alt'>{e(r['bant'][2])}</div></div>"
+            f"<b>{e(r['bant'][1])}</b></div>" if r.get("bant") else "")
          + "<div class='kutular'>"]
     for et, deger, stil in r["ozet"]:
         p.append(f"<div class='kutu' style='border-left-color:{RENK[stil]}'><div class='e'>{e(et)}</div>"
@@ -567,6 +604,8 @@ def excel(r):
         for c in ws[ws.max_row]:
             c.font, c.fill = Font(bold=True, color="FFFFFF", size=12), PatternFill("solid", fgColor="B42318")
         ws.cell(ws.max_row, 2).number_format = "#,##0.00"
+        ws.append([r["bant"][2]])
+        ws.cell(ws.max_row, 1).font = Font(bold=True, color="B42318")
     for et, deger, stil in r["ozet"]:
         ws.append([et, _tutar(deger.removesuffix(" TL"))])
         for c in ws[ws.max_row]:

@@ -1002,6 +1002,8 @@ class Isci:
                 rapor = kdv_kar.rapor_kur(f["ad"], ay, yil, donem_bas, s_ay["satirlar"], s_yil["satirlar"],
                                           luca.xlsx_satirlari(kebir[1]["bayt"]) if kebir and kebir[1] else None, notlar)
                 bilgi.update(durum="veri", rapor=rapor)
+                # rapor kendiliğinden PDF olarak kaydedilir (kullanıcı isteği 20.11.2026); kayıt hatası raporu engellemez
+                bilgi["kayit"] = self._rapor_dosyasi(rapor, f["ad"], f["klasor"], yil, ay, "pdf")
         except Iptal:
             raise
         except Exception as e:
@@ -1015,13 +1017,20 @@ class Isci:
             self._log(("HATA: " if bilgi["durum"] == "hata" else "") + f"KDV ve kâr/zarar raporu ({donem}): {bilgi['mesaj']}")
         self._olay("kdvkar_bitti", bilgi)
 
-    def _g_rapor_kaydet(self, rapor, firma, klasor, yil, ay, tur):
-        """Ekrandaki raporu dönemin 02_Raporlar klasörüne PDF ya da Excel olarak kaydeder. PDF, ayrı (profilsiz, penceresiz) bir
-        Chrome'da HTML'den üretilir; programın kendi tarayıcısına (E-Mükellef / Luca oturumları) dokunulmaz."""
-        sonuc = {"tur": tur, "yol": None, "hata": ""}
+    def _rapor_dosyasi(self, rapor, firma, klasor, yil, ay, tur):
+        """Raporu dönemin 02_Raporlar klasörüne PDF ya da Excel olarak yazar -> {tur, yol, durum, hata}. Aynı içerikli dosya varsa
+        yeniden yazılmaz (PDF'te metin, Excel'de hücreler karşılaştırılır; yalnız logo değiştiyse aynı sayılır). PDF, ayrı
+        (profilsiz, penceresiz) bir Chrome'da HTML'den üretilir; programın kendi tarayıcısına dokunulmaz. Hata yükseltmez."""
+        sonuc = {"tur": tur, "yol": None, "durum": "", "hata": ""}
         try:
             if tur == "xlsx":
                 bayt = kdv_kar.excel(rapor)
+
+                def ayni(eski, yeni):
+                    try:
+                        return cikti._xlsx_hucre_ozeti(eski) == cikti._xlsx_hucre_ozeti(yeni)
+                    except Exception:
+                        return False
             else:
                 tarayici = self.p.chromium.launch(channel="chrome", headless=True)
                 try:
@@ -1031,15 +1040,20 @@ class Isci:
                                      margin={"top": "14mm", "bottom": "14mm", "left": "13mm", "right": "13mm"})
                 finally:
                     tarayici.close()
+                ayni = cikti._pdf_ayni
             hedef = cikti.donem_klasoru(klasor, yil, ay, "02_Raporlar", gunluk=self._log)
             ad = cikti.temiz_ad(f"{firma} {yil}-{ay:02d} KDV ve Kar-Zarar Durumu")
-            yol, _ = cikti.belge_kaydet(hedef, ad, "." + tur, bayt, gunluk=self._log)
-            sonuc["yol"] = str(yol)
-            self._log(f"Rapor kaydedildi: {yol}")
+            yol, durum = cikti.belge_kaydet(hedef, ad, "." + tur, bayt, ayni_mi=ayni, gunluk=self._log)
+            sonuc.update(yol=str(yol), durum=durum)
+            self._log(f"Rapor {'zaten kayıtlı (aynı içerik)' if durum == 'ayni' else 'kaydedildi'}: {yol}")
         except Exception as e:
             sonuc["hata"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:300]
             self._log(f"HATA: rapor kaydedilemedi: {sonuc['hata']}")
-        self._olay("rapor_kaydedildi", sonuc)
+        return sonuc
+
+    def _g_rapor_kaydet(self, rapor, firma, klasor, yil, ay, tur):
+        """Rapor penceresindeki 'PDF' / 'Excel' düğmeleri: dosyayı yazar (aynısı varsa yazmaz) ve arayüze bildirir (dosya açılır)."""
+        self._olay("rapor_kaydedildi", self._rapor_dosyasi(rapor, firma, klasor, yil, ay, tur))
 
     def _g_son_unut(self, sessiz=True):
         """Kayıt klasörü değişti: son çalıştırmanın 'yalnız hatalıları tekrar dene' durumu unutulur (eski sonuçlar yeni klasöre yazılmasın)."""
