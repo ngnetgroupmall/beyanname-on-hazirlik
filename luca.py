@@ -731,6 +731,16 @@ def mizan_indir(ctx, pg, sirket_id, donem_id, bas, bit, gunluk, iptal=lambda: Fa
     return rapor_al(ctx, pg, sirket_id, donem_id, "mizan", "raporMizanHazirla.do", form, gunluk, iptal, zaman_asimi_sn, ad="Mizan")
 
 
+def hesap_plani_indir(ctx, pg, sirket_id, donem_id, gunluk, iptal=lambda: False, zaman_asimi_sn=300):
+    """Firmanın o dönemde kullandığı hesap planı (Raporlar > Genel Raporlar > Hesap Planı Listesi; Excel Liste).
+    Bakiye sütunları istenmez: dosya yalnız hesap planı değişince değişsin (her indirmede yeni kopya oluşmasın).
+    (bayt, dönem bilgisi) döner."""
+    form = rapor_formu(pg, "raporMuhasebeHesapKarti.do", {"report_type": "LIST", "bakiye_goster": "0"})
+    _listeye_cevir(form, ("hesap_tipi",))
+    return rapor_al(ctx, pg, sirket_id, donem_id, "hesap_plani_listesi", "raporMuhasebeHesapKarti.do", form, gunluk, iptal,
+                    zaman_asimi_sn, ad="Hesap Planı")
+
+
 def bordro_indir(ctx, pg, sirket_id, donem_id, ay, yil, gunluk, iptal=lambda: False, zaman_asimi_sn=300):
     """Aylık Bordro Dökümü (Excel Liste). (bayt, dönem bilgisi) döner. Bordro yoksa Luca hata/boş rapor verebilir."""
     form = rapor_formu(pg, "raporPersonelSonucAction.do", {"ay": str(ay), "yil": str(yil), "report_type": "LIST"},

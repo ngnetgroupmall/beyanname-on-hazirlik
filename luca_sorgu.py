@@ -1,6 +1,7 @@
 """Luca sorgularını çalıştırır ve sonucu E-Mükellef sonuçlarıyla aynı biçimde (emukellef._sonuc) hazırlar.
 
-Hepsi salt okunur: Defteri Kebir, Mizan (seçilen ay / 01.01 - ay sonu), Akıllı Entegrasyon alış-satış listeleri, Bordro Dökümü.
+Hepsi salt okunur: Defteri Kebir, Mizan (seçilen ay / 01.01 - ay sonu), Hesap Planı, Akıllı Entegrasyon alış-satış listeleri,
+Bordro Dökümü.
 İndirilen dosyalar çağırana "dosya" sözlüğüyle döner (kaydı cikti.luca_kaydet yapar).
 """
 import calendar
@@ -17,6 +18,7 @@ SORGULAR = [
     ("luca_kebir", "Luca Defteri Kebir"),
     ("luca_mizan_ay", "Luca Mizan (seçilen ay)"),
     ("luca_mizan_yil", "Luca Mizan (01.01 - ay sonu)"),
+    ("luca_hesap_plani", "Luca Hesap Planı"),
     ("luca_ae_alis", "Luca Akıllı Entegrasyon Alış Belgeleri"),
     ("luca_ae_satis", "Luca Akıllı Entegrasyon Satış Belgeleri"),
     ("luca_bordro", "Luca Bordro Dökümü"),
@@ -25,7 +27,7 @@ SORGULAR = [
 ANAHTARLAR = {k for k, _ in SORGULAR}
 AD = dict(SORGULAR)
 BIRIM = {"luca_kebir": "hesap", "luca_mizan_ay": "hesap", "luca_mizan_yil": "hesap", "luca_ae_alis": "belge", "luca_ae_satis": "belge",
-         "luca_bordro": "satır", "luca_utts": "fiş"}
+         "luca_bordro": "satır", "luca_utts": "fiş", "luca_hesap_plani": "hesap"}
 KDV_KEBIRLERI = ("190", "191", "391", "360")
 BOS_BORDRO_SATIRI = 11        # bordrosu olmayan ayda Luca yalnız başlık satırlarını döndürür (19.11.2026'da görüldü)
 KAYNAK_ADI = {"gib_efatura_alis": "GİB e-fatura", "gib_efatura_satis": "GİB e-fatura", "gib_ebelge_alis": "GİB e-arşiv",
@@ -121,6 +123,30 @@ def mizan_tablosu(satirlar):
     return ["Hesap kodu", "Hesap adı", "Borç", "Alacak", "Borç bakiyesi", "Alacak bakiyesi"], tablo
 
 
+def hesap_plani_tablosu(satirlar):
+    """Hesap Planı Listesi dosyasının satırları: (kolonlar, tablo). Kolonlar dosyanın kendi başlıklarıdır (ilk ikisi HESAP KODU,
+    HESAP ADI; sonra döviz kodu, hesap tipi ve — istenmişse — tutar sütunları). Hesap kodu metin olarak korunur; toplam satırı alınmaz."""
+    bas = next((i for i, r in enumerate(satirlar) if r and str(r[0] or "").strip().upper() == "HESAP KODU"), None)
+    if bas is None or len(satirlar[bas]) < 2 or "HESAP AD" not in str(satirlar[bas][1] or "").upper():
+        raise luca.LucaHatasi("Hesap planı dosyası beklenen yapıda değil ('HESAP KODU' / 'HESAP ADI' başlıkları yok).")
+    basliklar = [str(b or "").strip() for b in satirlar[bas]]
+    while basliklar and not basliklar[-1]:
+        basliklar.pop()
+    n = len(basliklar)
+    tutar = {i for i, b in enumerate(basliklar) if any(k in b.upper() for k in ("BORÇ", "ALACAK", "BAKİYE"))}
+    tablo = []
+    for r in satirlar[bas + 1:]:
+        r = (list(r) + [None] * n)[:n]
+        kod = str(r[0] if r[0] is not None else "").strip()
+        if not kod or not kod[0].isdigit():         # boş satır / "GENEL TOPLAM :"
+            continue
+        tablo.append([kod] + [(round(_sayi(v), 2) if v not in (None, "", " ") else None) if i in tutar else str(v if v is not None else "").strip()
+                              for i, v in enumerate(r) if i > 0])
+    ad = {"HESAP KODU": "Hesap kodu", "HESAP ADI": "Hesap adı", "KOD": "Döviz", "HESAP TİPİ": "Hesap tipi", "BORÇ": "Borç",
+          "ALACAK": "Alacak", "BORÇ BAKİYESİ": "Borç bakiyesi", "ALACAK BAKİYESİ": "Alacak bakiyesi"}
+    return [ad.get(b.upper(), b) for b in basliklar], tablo
+
+
 def _iptal_metni(b):
     return " / ".join(str(b.get(k)).strip() for k in ("iptal_itiraz", "iptal_itiraz_durumu", "turmob_iptal_itiraz", "turmob_iptal_itiraz_durum")
                       if str(b.get(k) or "").strip())
@@ -141,7 +167,7 @@ def ae_tablosu(liste):
 # ================================================================ çalıştırma
 def calistir(anahtar, ctx, pg, sirket_id, ay, yil, gunluk, iptal=lambda: False):
     """Luca'da firma/dönem açılır, sorgu çalışır. Döner: (sonuç, dosya | None).
-    dosya: {"tur": 'kebir'|'mizan'|'bordro', "bayt", "bas": date, "bit": date}  (kaydı çağıran yapar)
+    dosya: {"tur": 'kebir'|'mizan'|'hesap_plani'|'bordro'|'utts', "bayt", "bas": date, "bit": date}  (kaydı çağıran yapar)
     luca.LucaHatasi çağırana çıkar (oturum düşmesi vb. orada ele alınır)."""
     ad = AD[anahtar]
     donem_id = luca.firma_sec(pg, sirket_id, yil, ay, gunluk, iptal)
@@ -189,6 +215,22 @@ def calistir(anahtar, ctx, pg, sirket_id, ay, yil, gunluk, iptal=lambda: False):
             else:
                 parca.append(f"{k} yok")
         return emukellef._sonuc(ad, kapsam, "veri", f"{len(tablo)} hesap. " + "; ".join(parca) + ".", kolonlar, tablo), dosya
+
+    if anahtar == "luca_hesap_plani":
+        bayt, donem = luca.hesap_plani_indir(ctx, pg, sirket_id, donem_id, gunluk, iptal)
+        kolonlar, tablo = hesap_plani_tablosu(luca.xlsx_satirlari(bayt))
+        bas, bit = _donem_tarihi(donem, "donem_bas") or date(yil, 1, 1), _donem_tarihi(donem, "donem_bit") or date(yil, 12, 31)
+        kapsam = f"Mali dönem {bas:%d.%m.%Y} - {bit:%d.%m.%Y}"
+        if not tablo:
+            return emukellef._sonuc(ad, kapsam, "kayit_yok", "Luca'da bu firma/dönem için hesap planı boş.", kolonlar), None
+        tip_i = next((i for i, k in enumerate(kolonlar) if k == "Hesap tipi"), None)
+        mesaj = f"Hesap planı indirildi: {len(tablo)} hesap"
+        if tip_i is not None:
+            say = {}
+            for r in tablo:
+                say[r[tip_i]] = say.get(r[tip_i], 0) + 1
+            mesaj += " (" + ", ".join(f"{v} {k.lower()}" for k, v in sorted(say.items()) if k) + ")"
+        return emukellef._sonuc(ad, kapsam, "veri", mesaj + ".", kolonlar, tablo), {"tur": "hesap_plani", "bayt": bayt, "bas": bas, "bit": bit}
 
     if anahtar in ("luca_ae_alis", "luca_ae_satis"):
         yon = "alis" if anahtar == "luca_ae_alis" else "satis"

@@ -505,7 +505,7 @@ def _xlsx_hucre_ozeti(bayt):
 
 
 def luca_kaydet(firma, klasor, yil, ay, tur, bayt, bas, bit, gunluk=print):
-    """tur: 'kebir' | 'mizan' | 'bordro'; bas/bit: raporun tarih aralığı (date). Döner: (yol, 'yeni'|'ayni'|'yeni_ad').
+    """tur: 'kebir' | 'mizan' | 'hesap_plani' | 'utts' | 'bordro'; bas/bit: raporun tarih aralığı (date). Döner: (yol, 'yeni'|'ayni'|'yeni_ad').
     Aynı aralığın daha önce (başka gün de olsa) indirilmiş AYNI içerikli dosyası varsa yeniden yazılmaz; hiçbir dosyanın üzerine yazılmaz."""
     if tur == "kebir":
         hedef = donem_klasoru(klasor, yil, ay, "01_Kaynaklar", "Kebirler", gunluk=gunluk)
@@ -513,6 +513,9 @@ def luca_kaydet(firma, klasor, yil, ay, tur, bayt, bas, bit, gunluk=print):
     elif tur == "mizan":
         hedef = donem_klasoru(klasor, yil, ay, "01_Kaynaklar", LUCA_KLASORU, gunluk=gunluk)
         on_ek = temiz_ad(f"{firma} Luca Mizan {bas:%Y-%m-%d}_{bit:%Y-%m-%d}")
+    elif tur == "hesap_plani":                  # firmanın o mali dönemde kullandığı hesap planı (kullanıcı isteği 20.11.2026)
+        hedef = donem_klasoru(klasor, yil, ay, "01_Kaynaklar", LUCA_KLASORU, gunluk=gunluk)
+        on_ek = temiz_ad(f"{firma} Luca Hesap Plani {bas:%Y-%m-%d}_{bit:%Y-%m-%d}")
     elif tur == "utts":                         # Luca UTTS ekranının ayrıntılı Excel'i (kullanıcı kararı 19.11.2026)
         hedef = donem_klasoru(klasor, yil, ay, "01_Kaynaklar", LUCA_KLASORU, gunluk=gunluk)
         on_ek = temiz_ad(f"{firma} Luca UTTS Akaryakit {bas:%Y-%m-%d}_{bit:%Y-%m-%d}")

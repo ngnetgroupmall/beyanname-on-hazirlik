@@ -369,6 +369,7 @@ def _diger_bolumu(sonuclar):
 
 # ================================================================ Luca (muhasebe kayıtları)
 LUCA_ADLARI = {"kebir": "Luca Defteri Kebir", "mizan_ay": "Luca Mizan (seçilen ay)", "mizan_yil": "Luca Mizan (01.01 - ay sonu)",
+               "hesap_plani": "Luca Hesap Planı",
                "ae_alis": "Luca Akıllı Entegrasyon Alış Belgeleri", "ae_satis": "Luca Akıllı Entegrasyon Satış Belgeleri",
                "bordro": "Luca Bordro Dökümü", "utts": "Luca UTTS Akaryakıt Giderleri"}
 KDV_HESAP_ONEKLERI = ("190", "191", "391", "360")
@@ -441,7 +442,7 @@ def _luca_bolumu(sonuclar, dokum_kayitlari):
     if not any(bul.values()):
         return ["Luca sorguları bu çalıştırmada seçilmedi."]
     s = []
-    for k in ("kebir", "mizan_ay", "mizan_yil", "ae_alis", "ae_satis", "bordro", "utts"):
+    for k in ("kebir", "mizan_ay", "mizan_yil", "hesap_plani", "ae_alis", "ae_satis", "bordro", "utts"):
         x = bul[k]
         if x is None:
             continue

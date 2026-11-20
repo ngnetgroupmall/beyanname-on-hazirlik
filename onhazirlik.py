@@ -66,7 +66,7 @@ GRUPLAR = [
     ("Satış kanalları", ["okc", "pos", "todeb"]),
     ("İthalat ve araç", ["ithalat", "arac", "arac_gecmis", "arac_alim"]),
     ("GİB yazışmaları", ["evrak", "bildirim", "karsit", "etebligat"]),
-    ("Luca", ["luca_kebir", "luca_mizan_ay", "luca_mizan_yil", "luca_ae_alis", "luca_ae_satis", "luca_bordro", "luca_utts"]),
+    ("Luca", ["luca_kebir", "luca_mizan_ay", "luca_mizan_yil", "luca_hesap_plani", "luca_ae_alis", "luca_ae_satis", "luca_bordro", "luca_utts"]),
 ]
 SOL_GRUPLAR = (0, 1, 3, 4)                    # dar ekranda iki sütun — sol: 15 sorgu; sağ (ödemeler, GİB yazışmaları, Luca): 15 sorgu
 UC_SUTUN = ((0, 1), (2, 3, 4), (5, 6))        # geniş ekranda üç sütun (alt panel/sonuç kutuları için yer kalsın)
@@ -82,6 +82,7 @@ KISA_AD = {"beyan": "Önceki dönem KDV1 / KDV2", "muhsgk": "MUHSGK", "sgk6661":
            "arac": "Araçlar (mevcut)", "arac_gecmis": "Araçlar (geçmiş)", "arac_alim": "Araç alım / satım", "evrak": "Gelen evraklar",
            "bildirim": "Bildirimlerim", "karsit": "Karşıt inceleme tutanakları", "etebligat": "E-tebligatlar",
            "luca_kebir": "Defteri Kebir", "luca_mizan_ay": "Mizan (seçilen ay)", "luca_mizan_yil": "Mizan (01.01 – ay sonu)",
+           "luca_hesap_plani": "Hesap planı",
            "luca_ae_alis": "Akıllı Ent. alış belgeleri", "luca_ae_satis": "Akıllı Ent. satış belgeleri", "luca_bordro": "Bordro dökümü",
            "luca_utts": "UTTS akaryakıt (GİB'den getir)"}
 HAZIR = [("Tümü", [k for k, _ in SORGULAR]), ("Yalnız faturalar", GRUPLAR[1][1]),
@@ -2002,7 +2003,7 @@ class Uygulama:
                   "tahsilat": f"{A[p_ay - 1]} – {A[o_ay - 1]}", "borc": "bugün", "okc": bu, "pos": bu, "todeb": bu, "ithalat": bu,
                   "arac": "bugün", "arac_gecmis": "bugün", "arac_alim": str(yil), "evrak": "son 6 ay", "bildirim": "son 6 ay",
                   "karsit": "son 6 ay", "etebligat": "son 6 ay", "luca_kebir": f"{yil} yılı", "luca_mizan_ay": bu,
-                  "luca_mizan_yil": f"Ocak – {A[ay - 1]}", "luca_ae_alis": bu, "luca_ae_satis": bu, "luca_bordro": bu,
+                  "luca_mizan_yil": f"Ocak – {A[ay - 1]}", "luca_hesap_plani": f"{yil} yılı", "luca_ae_alis": bu, "luca_ae_satis": bu, "luca_bordro": bu,
                   "luca_utts": f"{A[ay - 1]} + {A[ay % 12]} 1–15"}
         for a, w in self.kapsam_yazi.items():
             w.configure(text=kapsam.get(a, ""))
