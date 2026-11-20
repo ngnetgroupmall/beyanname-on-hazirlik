@@ -10,7 +10,7 @@ bağlı, şifreli) saklanır; hiçbir yere gönderilmez.
 
 ## Kurulum
 
-1. [Releases](../../releases/latest) sayfasından `Beyanname On Hazirlik (...).zip` dosyasını indirin.
+1. Kurulum paketini indirin: [Beyanname-On-Hazirlik.zip](../../raw/paket/Beyanname-On-Hazirlik.zip) (yaklaşık 60 MB).
 2. Zip'i yazılabilir bir klasöre çıkarın (ör. Belgeler). *Program Files* olmasın.
 3. `Beyanname On Hazirlik.bat` dosyasına çift tıklayın.
 
@@ -42,6 +42,6 @@ git push
 - `guncelle.py` içindeki `DEPO` bu deponun adıdır; depo **herkese açık** olmalıdır.
 - `.gitattributes` satır sonu dönüşümünü kapatır; kaldırmayın (sha256 özetleri bozulur).
 - Python sürümü ya da kitaplıklar değişirse: `paketle.py` içindeki `PAKET_NO` artırılır, `surum_yaz.py --paket-en-az N`
-  çalıştırılır, `python -X utf8 paketle.py` ile yeni zip üretilip Releases'a yüklenir.
+  çalıştırılır, `python -X utf8 paketle.py` ile yeni zip üretilip deponun `paket` dalına `Beyanname-On-Hazirlik.zip` adıyla gönderilir.
 - `firmalar.json` ve not dosyaları `.gitignore` içindedir; depoya ofis verisi girmez. `paketle.py` de pakete girecek
   dosyalarda ofise özel iz bulursa paketi üretmez.

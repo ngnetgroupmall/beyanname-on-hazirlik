@@ -25,6 +25,8 @@ from pathlib import Path
 
 DEPO = "ngnetgroupmall/beyanname-on-hazirlik"                                    # GitHub deposu: "kullanici/depo" (boşsa güncelleme denetlenmez)
 DAL = "main"
+# kurulum paketi (zip) deponun ayrı "paket" dalında durur; yeni paket gerektiğinde kullanıcıya bu adres verilir
+PAKET_ADRESI = f"https://github.com/{DEPO}/raw/paket/Beyanname-On-Hazirlik.zip"
 KLASOR = Path(__file__).resolve().parent
 VERI = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "KdvOnHazirlik"
 PAKET = KLASOR.parent / "paket.json"         # yalnız taşınabilir pakette bulunur; güncellemeyle DEĞİŞMEZ
@@ -218,7 +220,7 @@ def baslangic():
             pass
         if int(uzak.get("paket_en_az", 1)) > paket_no():
             s["uyari"] = (f"Programın yeni sürümü ({uzak['surum']}) yeni kurulum paketini gerektiriyor; bu sürüm kendiliğinden "
-                          f"güncellenemez. Yeni paketi indirin: https://github.com/{DEPO}/releases/latest")
+                          f"güncellenemez. Yeni paketi indirin: {PAKET_ADRESI}")
             return s
         veriler = {}
         for ad, ozet in uzak["dosyalar"].items():

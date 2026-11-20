@@ -1,5 +1,5 @@
 {
-  "surum": "2026.11.20.2",
+  "surum": "2026.11.20.3",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "bb29d7a110338a077f05ad74b97bcbff96b6592a9c0d9969b46f47a0128e69d0",
@@ -9,7 +9,7 @@
     "dokum.py": "b5bb73ad32f888a9c0183d41893a58cb5afb3e2a05d945a2d3614c351a987795",
     "emukellef.py": "c9c2d5e74c130f0400815284ff1db8a0693372df1ab627e26d1f3aedac627156",
     "giris_kasasi.py": "dd5548bc6b2a7a4ced92f51935a90c00cbe9337cd1161f01a20afeae20bea992",
-    "guncelle.py": "1f8635839a09f3b566b64b7368f4ef077008114cc8e7b77071ffdfc9d4db117f",
+    "guncelle.py": "2fbfe997152448031e1e3d5c525f558bc15f0ff400319efc17b0ea121da0fbb2",
     "komut.py": "4a42560582e2d9d3c665c193795f0f77dd31da54f0c9140141e839b2ba2fd996",
     "luca.py": "94b98844a4b10b86876b06177ff6e3482e0305d8c74398a594de0682dc679b50",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
