@@ -67,6 +67,11 @@ def calistir():
         uyari = s.get("uyari") or ""
         if s.get("yeniden") and _yeniden_baslat(kilit, s.get("mesaj") or ""):
             return
+        if kilit is not None and kilit.closed:      # yeniden başlatılamadı: kilit bu süreçte yeniden alınır
+            kilit = guncelle.kilit_al()
+            if kilit is None:
+                _kutu("Program zaten açık.", 0x40)
+                return
         bilgi = bilgi or s.get("mesaj") or ""
     try:
         import onhazirlik

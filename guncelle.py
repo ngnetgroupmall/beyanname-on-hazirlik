@@ -4,7 +4,12 @@ Depo (herkese açık) = program dosyaları. Kökünde surum.json bulunur (surum_
     {"surum": "2026.11.20.1", "paket_en_az": 1, "dosyalar": {"onhazirlik.py": "<sha256>", ...}}
 
 Açılışta baslat.pyw şu sırayla çağırır:  kilit_al() -> baslangic() -> (gerekirse süreç yeniden başlar) -> program -> onayla()
-  1. Yarım kalmış / onaylanmamış güncelleme varsa (günlük dosyası duruyorsa) eski dosyalar geri yüklenir, o sürüm atlanır.
+  1. Günlük dosyası duruyorsa:
+       - "uygulaniyor": dosyalar yerine konurken kesilmiş -> eski dosyalar geri yüklenir, o sürüm atlanır;
+       - "denemede", ilk kez görülüyor: güncellemenin hemen ardından yeniden başlayan süreçtir (yeni sürümün ilk açılışı) ->
+         günlüğe "açılış denendi" işareti konur, geri ALINMAZ, program açılır (20.11.2026 düzeltmesi: önceden burada geri alınıyordu
+         ve güncelleme hiç tutmuyordu);
+       - "denemede", işaret zaten var: yeni sürüm önceki açılışta onaylanamadı (açılamadı) -> geri alınır, o sürüm atlanır.
   2. Depodaki surum.json okunur (kısa zaman aşımı; çevrimdışıysa sessizce geçilir). Sürüm yereldekinden büyükse sha256'sı farklı
      dosyalar program klasöründeki _yeni\\ altına indirilir; sha256 ve sözdizimi doğrulanır. Hepsi tamamsa eskiler _onceki\\ altına
      yedeklenir, yeniler yerine konur, günlük "denemede" olarak kalır.
@@ -201,8 +206,17 @@ def baslangic():
     try:
         if not paket_mi():
             return s
-        if bekleyen_var():                          # önceki açılış yarım kaldı ya da yeni sürüm açılamadan kapandı
-            geri = geri_al()
+        if bekleyen_var():
+            g = _oku(GUNLUK)
+            if g.get("durum") == "denemede" and not g.get("acilis_denendi"):
+                # güncellemenin hemen ardından yeniden başlayan süreç: yeni sürüm şimdi açılır (onayla() günlüğü siler).
+                # Bu açılışta başka güncelleme denetlenmez (yedek klasörü korunmalı).
+                try:
+                    _yaz(GUNLUK, dict(g, acilis_denendi=True))
+                except OSError:
+                    pass
+                return s
+            geri = geri_al()                        # yarım kalan uygulama ya da açılamayan yeni sürüm
             s.update(yeniden=True, mesaj=f"Güncelleme ({geri}) tamamlanamadı; önceki sürüme dönüldü.")
             return s
         if not DEPO:
