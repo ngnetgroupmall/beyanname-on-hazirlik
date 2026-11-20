@@ -1,0 +1,3 @@
+# Dosyalar bayt bayt aynı kalmalı: surum.json'daki sha256 özetleri, depodaki dosyayla birebir eşleşmek zorunda
+# (satır sonu dönüşümü olursa otomatik güncelleme özet uyuşmazlığı görür ve güncellemez).
+* -text

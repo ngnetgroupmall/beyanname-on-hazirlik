@@ -1,0 +1,12 @@
+# Ofise özel veri ve notlar — depoya GİRMEZ
+firmalar*.json
+KESIF_NOTLARI.md
+LUCA_NOTLARI.md
+
+# Çalışma kalıntıları
+__pycache__/
+*.pyc
+*.tmp
+_yeni/
+_onceki/
+guncelleme_gunlugu.json
