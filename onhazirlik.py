@@ -932,9 +932,14 @@ class RaporPenceresi(tk.Toplevel):
         ust = tk.Frame(ic, bg=R["zemin"])
         ust.pack(fill="x", padx=14, pady=(12, 4))
         # ofis logosu (kullanıcı verisinde; PDF'te de başlığın sağında çıkar). Tıklanınca / logo yokken bağlantıyla seçilir.
-        self.logo_yazi = tk.Label(ust, bg=R["zemin"], fg=R["mavi"], cursor="hand2", font=(YAZI, 8, "underline"))
-        self.logo_yazi.pack(side="right", anchor="n")
+        logo_kutu = tk.Frame(ust, bg=R["zemin"])
+        logo_kutu.pack(side="right", anchor="n")
+        self.logo_yazi = tk.Label(logo_kutu, bg=R["zemin"], fg=R["mavi"], cursor="hand2", font=(YAZI, 8, "underline"))
+        self.logo_yazi.pack(anchor="e")
         self.logo_yazi.bind("<Button-1>", lambda e: self._logo_sec())
+        self.logo_don = tk.Label(logo_kutu, text="Varsayılan logoya dön", bg=R["zemin"], fg=R["mavi"], cursor="hand2",
+                                 font=(YAZI, 8, "underline"))
+        self.logo_don.bind("<Button-1>", lambda e: self._logo_varsayilan())
         self.logo_resim = None                      # PhotoImage başvurusu pencerede tutulur (yoksa görüntü kaybolur)
         self._logo_goster()
         tk.Label(ust, text="KDV ve Kâr / Zarar Durumu", bg=R["zemin"], fg=R["lacivert"], font=(YAZI, 15, "bold")).pack(anchor="w")
@@ -1004,9 +1009,22 @@ class RaporPenceresi(tk.Toplevel):
             self.logo_yazi.configure(image=self.logo_resim, text="")
         else:
             self.logo_yazi.configure(image="", text="Ofis logosu ekle (PNG)")
+        if ayar.ozel_logo_var():                    # kendi logosunu seçmiş: varsayılana dönebilir
+            self.logo_don.pack(anchor="e")
+        else:
+            self.logo_don.pack_forget()
+
+    def _logo_varsayilan(self):
+        try:
+            ayar.logo_sil()
+        except OSError as e:
+            messagebox.showerror("Ofis logosu", f"Logo kaldırılamadı: {e}", parent=self)
+            return
+        self._logo_goster()
+        self.uyg._yaz("Kendi logonuz kaldırıldı; raporlarda programın varsayılan logosu çıkar.")
 
     def _logo_sec(self):
-        yol = filedialog.askopenfilename(parent=self, title="Ofis logosu (PNG) — raporların başlığında çıkar",
+        yol = filedialog.askopenfilename(parent=self, title="Kendi logonuz (PNG) — raporların başlığında varsayılanın yerine çıkar",
                                          filetypes=[("PNG resmi", "*.png")])
         if not yol:
             return
@@ -1019,7 +1037,7 @@ class RaporPenceresi(tk.Toplevel):
                                  parent=self)
             return
         self._logo_goster()
-        self.uyg._yaz("Ofis logosu kaydedildi; rapor PDF'lerinin başlığında çıkar.")
+        self.uyg._yaz("Kendi logonuz kaydedildi; rapor PDF'lerinin başlığında varsayılan logonun yerine çıkar.")
 
 
 class Uygulama:

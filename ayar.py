@@ -28,7 +28,7 @@ AYARLAR = VERI / "ayarlar.json"
 VARSAYILAN_KOK = Path(os.environ.get("KDV_VARSAYILAN_KOK") or r"D:\Claude\Firmalar")
 KOK_ANAHTARI = "firmalar_klasoru"
 ADRES_ANAHTARI = "emukellef_adresi"
-LOGO = VERI / "logo.png"        # ofisin logosu (raporların başlığında); kullanıcı verisindedir, programla / depoyla DAĞITILMAZ
+LOGO = VERI / "logo.png"        # kullanıcının KENDİ seçtiği logo (varsa varsayılanın yerine geçer); kullanıcı verisindedir
 LOGO_SINIRI = 2_000_000         # bayt
 EMUKELLEF_ALANI = "emukellef.org"
 
@@ -57,13 +57,36 @@ def ayar_yaz(**degisiklik):
     return d
 
 
+def ozel_logo_var():
+    return LOGO.is_file()
+
+
+def varsayilan_logo():
+    """Programla gelen varsayılan logo (logo_veri.py); modül yoksa / bozuksa None."""
+    try:
+        import base64
+        import logo_veri
+        b = base64.b64decode(logo_veri.LOGO_B64)
+    except Exception:
+        return None
+    return b if b[:8] == b"\x89PNG\r\n\x1a\n" else None
+
+
 def logo_oku():
-    """Ofis logosunun (PNG) baytları; logo yoksa, okunamıyorsa ya da PNG değilse None (rapor logosuz düzenlenir)."""
+    """Rapor başlığındaki logonun (PNG) baytları: kullanıcının kendi logosu varsa ve geçerliyse o, yoksa programın varsayılanı;
+    ikisi de yoksa None (rapor logosuz düzenlenir)."""
     try:
         b = LOGO.read_bytes()
+        if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) <= LOGO_SINIRI:
+            return b
     except OSError:
-        return None
-    return b if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) <= LOGO_SINIRI else None
+        pass
+    return varsayilan_logo()
+
+
+def logo_sil():
+    """Kullanıcının kendi logosunu kaldırır (varsayılan logoya dönülür). Silinemezse OSError."""
+    LOGO.unlink(missing_ok=True)
 
 
 def logo_kaydet(bayt):
