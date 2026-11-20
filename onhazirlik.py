@@ -896,6 +896,132 @@ class GirisPenceresi(tk.Toplevel):
 
 
 # ================================================================ ana pencere
+class RaporPenceresi(tk.Toplevel):
+    """KDV ve kâr/zarar durumu raporunu ekranda gösterir (kdv_kar.rapor_kur yapısı). Firma/dönem pencerede saklanır: 'PDF' ve
+    'Excel' düğmeleri ana ekrandaki güncel seçimi değil, BU raporu kaydeder."""
+    RENK = {"kirmizi": R["kirmizi"], "yesil": R["yesil"], "kalin": R["yazi"], "": R["yazi"]}
+
+    def __init__(self, uyg, bilgi):
+        super().__init__(uyg.kok)
+        self.uyg, self.bilgi = uyg, bilgi
+        r = bilgi["rapor"]
+        self.title(f"KDV ve kâr / zarar durumu — {r['firma']} · {r['donem']}")
+        self.configure(bg=R["zemin"])
+        en, boy = 900, min(820, uyg.kok.winfo_screenheight() - 120)
+        self.geometry(f"{en}x{boy}+{max(0, (self.winfo_screenwidth() - en) // 2)}+{max(0, (self.winfo_screenheight() - 79 - boy) // 2)}")
+        self.minsize(700, 420)
+        alt = tk.Frame(self, bg=R["zemin"])
+        alt.pack(side="bottom", fill="x", padx=12, pady=10)
+        dugme(alt, "PDF olarak kaydet", lambda: uyg.rapor_kaydet(bilgi, "pdf", self), ana=True).pack(side="left")
+        dugme(alt, "Excel olarak kaydet", lambda: uyg.rapor_kaydet(bilgi, "xlsx", self)).pack(side="left", padx=(8, 0))
+        dugme(alt, "Kapat", self.destroy).pack(side="right")
+        tk.Label(alt, text="Dosya, dönemin 02_Raporlar klasörüne kaydedilir ve açılır.", bg=R["zemin"], fg=R["gri"],
+                 font=(YAZI, 8)).pack(side="left", padx=12)
+        tuval = tk.Canvas(self, bg=R["zemin"], highlightthickness=0)
+        kaydir = ttk.Scrollbar(self, orient="vertical", command=tuval.yview)
+        tuval.configure(yscrollcommand=kaydir.set)
+        kaydir.pack(side="right", fill="y")
+        tuval.pack(side="left", fill="both", expand=True)
+        ic = tk.Frame(tuval, bg=R["zemin"])
+        pencere = tuval.create_window((0, 0), window=ic, anchor="nw")
+        ic.bind("<Configure>", lambda e: tuval.configure(scrollregion=tuval.bbox("all")))
+        tuval.bind("<Configure>", lambda e: tuval.itemconfigure(pencere, width=e.width))
+        self.bind("<MouseWheel>", lambda e: tuval.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        ust = tk.Frame(ic, bg=R["zemin"])
+        ust.pack(fill="x", padx=14, pady=(12, 4))
+        # ofis logosu (kullanıcı verisinde; PDF'te de başlığın sağında çıkar). Tıklanınca / logo yokken bağlantıyla seçilir.
+        self.logo_yazi = tk.Label(ust, bg=R["zemin"], fg=R["mavi"], cursor="hand2", font=(YAZI, 8, "underline"))
+        self.logo_yazi.pack(side="right", anchor="n")
+        self.logo_yazi.bind("<Button-1>", lambda e: self._logo_sec())
+        self.logo_resim = None                      # PhotoImage başvurusu pencerede tutulur (yoksa görüntü kaybolur)
+        self._logo_goster()
+        tk.Label(ust, text="KDV ve Kâr / Zarar Durumu", bg=R["zemin"], fg=R["lacivert"], font=(YAZI, 15, "bold")).pack(anchor="w")
+        tk.Label(ust, text=f"{r['firma']} · {r['donem']} · düzenleme {r['uretim']} · kaynak: Luca mizan ve Defteri Kebir", bg=R["zemin"],
+                 fg=R["gri"], font=(YAZI, 9)).pack(anchor="w")
+        if r.get("bant"):                           # stok yetmiyorsa: en üstte kırmızı bant (tüm stok maliyete atılırsa çıkacak vergi)
+            bant = tk.Frame(ic, bg=R["kirmizi"])
+            bant.pack(fill="x", padx=14, pady=(6, 0))
+            tk.Label(bant, text=r["bant"][1], bg=R["kirmizi"], fg="white", font=(YAZI, 16, "bold")).pack(side="right", padx=12, pady=7)
+            tk.Label(bant, text=r["bant"][0], bg=R["kirmizi"], fg="white", font=(YAZI, 11, "bold"), anchor="w", justify="left",
+                     wraplength=560).pack(side="left", padx=12, pady=7)
+        kutular = tk.Frame(ic, bg=R["zemin"])
+        kutular.pack(fill="x", padx=14, pady=(6, 2))
+        for n, (et, deger, stil) in enumerate(r["ozet"]):
+            cerceve = tk.Frame(kutular, bg=self.RENK[stil] if stil in ("kirmizi", "yesil") else R["lacivert"])
+            cerceve.pack(side="left", fill="both", expand=True, padx=(0 if n == 0 else 8, 0))
+            k = tk.Frame(cerceve, bg=R["kirmizi_z"] if stil == "kirmizi" else R["kart"])
+            k.pack(fill="both", expand=True, padx=(5, 1), pady=1)
+            tk.Label(k, text=et, bg=k["bg"], fg=R["gri"], font=(YAZI, 8), anchor="w", wraplength=max(110, 800 // len(r["ozet"]) - 24), justify="left").pack(fill="x", padx=9, pady=(6, 0))
+            tk.Label(k, text=deger, bg=k["bg"], fg=self.RENK[stil], font=(YAZI, 15 if len(r["ozet"]) <= 3 else 11, "bold"), anchor="w").pack(fill="x", padx=9, pady=(0, 6))
+        for b in r["bolumler"]:
+            dis, k = kart(ic)
+            dis.pack(fill="x", padx=14, pady=(10, 0))
+            tk.Label(k, text=b["baslik"], bg=R["kart"], fg=R["lacivert"], font=(YAZI, 10, "bold"), anchor="w").pack(fill="x", pady=(0, 5))
+            tablo = tk.Frame(k, bg=R["cizgi"])
+            tablo.pack(fill="x")
+            adet = len(b["kolonlar"])
+            for i, ad in enumerate(b["kolonlar"]):
+                tablo.grid_columnconfigure(i, weight=3 if i == 0 else 1, uniform=None)
+                tk.Label(tablo, text=ad, bg=R["lacivert"], fg="white", font=(YAZI, 9, "bold"), anchor="w" if i == 0 else "e",
+                         padx=8, pady=3).grid(row=0, column=i, sticky="nsew")
+            for n, s in enumerate(b["satirlar"]):
+                stil = b["stil"].get(n, "")
+                zemin = R["kirmizi_z"] if stil == "kirmizi" else R["kart"]
+                for i in range(adet):
+                    v = s[i] if i < len(s) else ""
+                    sayi = i > 0 and (i == adet - 1 or adet > 3)
+                    tk.Label(tablo, text=str(v), bg=zemin, fg=self.RENK[stil], font=(YAZI, 9, "bold" if stil else "normal"),
+                             anchor="e" if sayi else "w", padx=8, pady=2, wraplength=0 if sayi else 430, justify="left"
+                             ).grid(row=n + 1, column=i, sticky="nsew", pady=(1, 0))
+            if b.get("not"):
+                tk.Label(k, text=b["not"], bg=R["kart"], fg=R["gri"], font=(YAZI, 8), anchor="w", justify="left",
+                         wraplength=820).pack(fill="x", pady=(5, 0))
+        if r["uyarilar"]:
+            dis, k = kart(ic)
+            dis.pack(fill="x", padx=14, pady=(10, 0))
+            tk.Label(k, text="Uyarılar ve notlar", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 10, "bold"), anchor="w").pack(fill="x", pady=(0, 4))
+            for u in r["uyarilar"]:
+                tk.Label(k, text="•  " + u, bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9), anchor="w", justify="left",
+                         wraplength=820).pack(fill="x", pady=1)
+        tk.Frame(ic, bg=R["zemin"], height=14).pack()
+        self.transient(uyg.kok)
+        self.lift()
+        self.focus_set()
+
+    def _logo_goster(self):
+        bayt = ayar.logo_oku()
+        self.logo_resim = None
+        if bayt:
+            try:
+                resim = tk.PhotoImage(data=base64.b64encode(bayt), format="png")
+                oran = max(1, -(-resim.height() // 64), -(-resim.width() // 170))    # en çok 64 x 170 piksel
+                self.logo_resim = resim.subsample(oran) if oran > 1 else resim
+            except tk.TclError:
+                self.logo_resim = None
+        if self.logo_resim is not None:
+            self.logo_yazi.configure(image=self.logo_resim, text="")
+        else:
+            self.logo_yazi.configure(image="", text="Ofis logosu ekle (PNG)")
+
+    def _logo_sec(self):
+        yol = filedialog.askopenfilename(parent=self, title="Ofis logosu (PNG) — raporların başlığında çıkar",
+                                         filetypes=[("PNG resmi", "*.png")])
+        if not yol:
+            return
+        try:
+            bayt = Path(yol).read_bytes()
+            tk.PhotoImage(data=base64.b64encode(bayt), format="png")      # açılabiliyor mu
+            ayar.logo_kaydet(bayt)
+        except (OSError, ValueError, tk.TclError) as e:
+            messagebox.showerror("Ofis logosu", f"Logo kullanılamadı: {e if isinstance(e, ValueError) else 'dosya açılamadı ya da PNG değil'}",
+                                 parent=self)
+            return
+        self._logo_goster()
+        self.uyg._yaz("Ofis logosu kaydedildi; rapor PDF'lerinin başlığında çıkar.")
+
+
 class Uygulama:
     def __init__(self, kok, isci_sinifi=Isci, otomatik=True, acilis_bilgisi=""):
         self.kok = kok
@@ -1303,6 +1429,13 @@ class Uygulama:
                                  font=(YAZI, 13, "bold"), bg=R["yesil"], fg="white", activebackground="#22994a",
                                  activeforeground="white", disabledforeground="#cfe8d6", pady=9)
         self.b_basla.pack(fill="x", padx=2, pady=2)
+        # KDV ve kâr/zarar raporu (kullanıcı isteği 20.11.2026): Luca mizanları + kebirden ekranda rapor; PDF / Excel kaydedilebilir
+        self.rapor_cerceve = tk.Frame(sol, bg=R["lacivert"])
+        self.rapor_cerceve.pack(side="bottom", fill="x", before=ilk_kart, pady=(0, 6))
+        self.b_rapor = tk.Button(self.rapor_cerceve, text="KDV ve kâr / zarar raporu", command=self._kdvkar_raporu, relief="flat", bd=0,
+                                 cursor="hand2", font=(YAZI, 10, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
+                                 activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], pady=5)
+        self.b_rapor.pack(fill="x", padx=1, pady=1)
 
     # ------------------------------------------------------------ sağ sütun
     def _sag_sutun(self, sag):
@@ -1476,6 +1609,8 @@ class Uygulama:
         if not hasattr(self, "b_basla") or not hasattr(self, "secim"):
             return
         self.b_beyan.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
+        if hasattr(self, "b_rapor"):
+            self.b_rapor.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
         if self.kosu or self.beyan_kosu:
             self.basla_cerceve.configure(bg=R["kirmizi"])
             self.b_basla.configure(text="■  Durdur", bg=R["kart"], fg=R["kirmizi"], activebackground=R["kirmizi_z"],
@@ -2293,6 +2428,62 @@ class Uygulama:
         self.beyan_sira = getattr(self.isci, "sira", None)
         self._dugme_guncelle()                      # Başlat -> Durdur (indirme durdurulabilir)
 
+    def _kdvkar_raporu(self):
+        """Seçili firma + dönem için KDV ve kâr/zarar durumu raporu: Luca'dan ayın mizanı, dönem başından mizan ve kebir indirilir."""
+        if not self._kok_gerekli():
+            return
+        t = self._secili()
+        if not t:
+            messagebox.showwarning("Firma seçin", "Önce listeden firma seçin.", parent=self.kok)
+            return
+        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        if not t.get("klasor"):
+            t = self._klasor_tanimla(t)
+            if t is None:
+                return
+        if self.luca is not True and self.gorunur and self.luca_elle:     # elle giriş bekleniyor: pencere yeniden açılmaz
+            self.luca_elle = self._kdvkar_raporu
+            self._yaz("Açılan tarayıcı penceresinde Luca'ya giriş yapıp 'LUCA MALİ MÜŞAVİR PAKETİ'ni açın; rapor kendiliğinden başlar.")
+            return
+        if self.luca is not True:                   # rapor Luca kayıtlarından düzenlenir: önce Luca girişi
+            self._yaz("KDV ve kâr/zarar raporu Luca kayıtlarından düzenlenir; Luca girişi gerekli.")
+            self.luca_giris_ac(sonra=self._kdvkar_raporu)
+            return
+        if not t.get("luca"):
+            t = self._luca_firma_sor(t)
+            if t is None:
+                self._yaz("Luca firması seçilmedi; rapor düzenlenmedi.")
+                return
+        ay, yil = self._donem()
+        firma = {"ad": t["ad"], "klasor": t["klasor"], "emukellef_id": t["id"], "vkn": t.get("vkn", ""), "unvan": t.get("unvan", ""),
+                 "luca_sirket_id": t.get("luca") or ""}
+        self._alt_goster("gunluk")
+        self.isci.gonder("kdv_kar_raporu", firma=firma, ay=ay, yil=yil)
+        self.beyan_kosu = True                      # ortak tek-görev kilidi (Başlat kilitli, Durdur açık)
+        self.beyan_sira = getattr(self.isci, "sira", None)
+        self._dugme_guncelle()
+
+    def _kdvkar_sonucu(self, b):
+        if b.get("durum") == "veri" and b.get("rapor"):
+            RaporPenceresi(self, b)
+        elif b.get("durum") == "kayit_yok":
+            messagebox.showinfo(f"KDV ve kâr/zarar — {b.get('firma', '')} · {b.get('donem', '')}", b.get("mesaj") or "Kayıt yok.", parent=self.kok)
+        else:
+            messagebox.showwarning(f"KDV ve kâr/zarar — {b.get('firma', '')} · {b.get('donem', '')}",
+                                   "Rapor düzenlenemedi:\n" + (b.get("mesaj") or "bilinmeyen hata"), parent=self.kok)
+
+    def rapor_kaydet(self, b, tur, ust=None):
+        """Rapor penceresindeki 'PDF' / 'Excel' düğmeleri: dosya dönemin 02_Raporlar klasörüne yazılır ve açılır."""
+        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():
+            messagebox.showinfo("Rapor", "Bir işlem sürüyor; bitince yeniden deneyin.", parent=ust or self.kok)
+            return
+        self.isci.gonder("rapor_kaydet", rapor=b["rapor"], firma=b["firma"], klasor=b["klasor"], yil=b["yil"], ay=b["ay"], tur=tur)
+        self.beyan_kosu = True
+        self.beyan_sira = getattr(self.isci, "sira", None)
+        self._dugme_guncelle()
+
     def _beyan_bitti(self):
         if self.beyan_kosu:
             self.beyan_kosu, self.beyan_sira = False, None
@@ -2412,6 +2603,17 @@ class Uygulama:
         elif tur == "beyanname_bitti":              # pencere ayrı turda açılır: olay döngüsü ('calisiyor' vb.) beklemesin
             self._beyan_bitti()
             self.kok.after(60, lambda v=veri: self._beyanname_sonucu(v))
+        elif tur == "kdvkar_bitti":
+            self._beyan_bitti()
+            self._onceki_yenile(gecikme=300)        # inen mizan / kebir dosyaları nota yansısın
+            self.kok.after(60, lambda v=veri: self._kdvkar_sonucu(v))
+        elif tur == "rapor_kaydedildi":
+            self._beyan_bitti()
+            if veri.get("yol"):
+                self._ac(veri["yol"])
+            else:
+                self.kok.after(60, lambda v=veri: messagebox.showerror("Rapor", "Rapor kaydedilemedi:\n" + (v.get("hata") or "bilinmeyen hata"),
+                                                                       parent=self.kok))
         elif tur == "onceki":                       # arka planda okunan önceki indirmeler (yalnız en son istek, hâlâ seçiliyse)
             if veri.get("sira") == self.onceki_sira and veri.get("hedef") == self._onceki_hedefi():
                 self.onceki = veri

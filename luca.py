@@ -21,6 +21,11 @@ class LucaHatasi(Exception):
     pass
 
 
+class RaporHazirlanamadi(LucaHatasi):
+    """Luca rapor işini bitirdi ama dosya üretmedi (durum 999 'Rapor dosyası bulunamadı'). Bir firmada o rapor uzun süredir
+    alınmamışsa İLK istek böyle biter, hemen ardından yapılan istek başarılı olur (20.11.2026'da canlıda doğrulandı)."""
+
+
 class Iptal(LucaHatasi):
     """Kullanıcı durdurdu (hata sayılmaz)."""
 
@@ -653,17 +658,47 @@ def _listeye_cevir(form, alanlar):
     return form
 
 
+# "Dosya üretilmedi" durumunda rapor yeniden istenir. Canlı ölçüm (20.11.2026, 9 firma): ilk istekten 3-40 sn sonra hazır oluyor;
+# programda 45 sn sonra da hazır olmayan görüldü. Toplam bekleme ~3 dakika.
+RAPOR_ARA_SN = (2, 4, 8, 15, 20, 20, 30, 30, 30, 30)   # denemeler arasındaki bekleme
+RAPOR_DENEME = len(RAPOR_ARA_SN) + 1
+
+
 def rapor_al(ctx, pg, sirket_id, donem_id, rapor_tur, sayfa, form, gunluk, iptal=lambda: False, zaman_asimi_sn=300, ad="rapor"):
     """Luca yeni rapor sistemi: isteği gönderir, hazır olmasını bekler, dosyayı indirir. (bayt, dönem bilgisi) döner.
-    E-posta ile gönderme seçenekleri HİÇBİR ZAMAN kullanılmaz (email_gonder boş bırakılır)."""
+    Luca işi dosya üretmeden bitirirse (RaporHazirlanamadi) rapor yeniden istenir: firmada o rapor uzun süredir alınmamışsa
+    ilk istek böyle bitiyor, sonraki başarılı oluyor."""
+    for deneme in range(1, RAPOR_DENEME + 1):
+        try:
+            return _rapor_iste(ctx, pg, sirket_id, donem_id, rapor_tur, sayfa, form, gunluk, iptal, zaman_asimi_sn, ad)
+        except RaporHazirlanamadi:
+            if deneme == RAPOR_DENEME:
+                raise
+            gunluk(f"Luca: {ad} henüz hazırlanamadı (firmada bu rapor uzun süredir alınmadıysa ilk istekler boş döner, "
+                   f"1 dakikayı bulabilir); yeniden isteniyor ({deneme + 1}/{RAPOR_DENEME})…")
+            son = time.time() + RAPOR_ARA_SN[deneme - 1]
+            while time.time() < son:
+                if iptal():
+                    raise Iptal("İptal edildi.")
+                time.sleep(0.5)
+
+
+def _rapor_iste(ctx, pg, sirket_id, donem_id, rapor_tur, sayfa, form, gunluk, iptal=lambda: False, zaman_asimi_sn=300, ad="rapor"):
+    """Tek rapor isteği (bkz. rapor_al). E-posta ile gönderme seçenekleri HİÇBİR ZAMAN kullanılmaz (email_gonder boş bırakılır)."""
     _acik_firma_dogrula(pg, sirket_id, donem_id)
     takip_govde = {"donem_id": str(donem_id), "params": {"raporTur": rapor_tur}}
     donem = donem_bilgisi(ctx, pg, sirket_id, donem_id)
-    onceki = {}
-    try:
-        onceki = _json_post(ctx, pg, "genel/rapor_takip.jq", takip_govde, sayfa) or {}
-    except LucaHatasi:
-        pass
+    # İstekten ÖNCEKİ rapor kaydı: yeni raporu eskisinden ayırmanın tek yolu (başlangıç zamanı). Okunamazsa devam edilmez;
+    # yoksa önceki (başka tarih aralıklı) hazır rapor "yeni" sanılıp indirilebilir.
+    onceki = None
+    for deneme in range(3):
+        try:
+            onceki = _json_post(ctx, pg, "genel/rapor_takip.jq", takip_govde, sayfa) or {}
+            break
+        except LucaHatasi:
+            time.sleep(1)
+    if onceki is None:
+        raise LucaHatasi(f"{ad}: Luca rapor durumu okunamadı; rapor istenmedi.")
     form = dict(form)
     form.update({"donem_id": str(donem_id), "sirket_id": str(sirket_id), "tur": rapor_tur, "email_hesap": None, "email_gonder": ""})
     form.pop("email_to", None)
@@ -686,6 +721,7 @@ def rapor_al(ctx, pg, sirket_id, donem_id, rapor_tur, sayfa, form, gunluk, iptal
     gunluk(f"Luca: {ad} istendi, hazırlanıyor…")
     son = time.time() + zaman_asimi_sn
     son_aciklama = ""
+    hata_basi = None                                # hata durumunun ilk görüldüğü an (kesintisiz sürüyorsa)
     while True:
         if iptal():
             try:
@@ -698,15 +734,23 @@ def rapor_al(ctx, pg, sirket_id, donem_id, rapor_tur, sayfa, form, gunluk, iptal
         time.sleep(1.5)
         t = _json_post(ctx, pg, "genel/rapor_takip.jq", takip_govde, sayfa) or {}
         aciklama = t.get("durumAciklama") or ""
-        if aciklama != son_aciklama:
-            gunluk("Luca: " + aciklama)
-            son_aciklama = aciklama
         durum = t.get("durum")
         yeni = t.get("baslangicTarihi") and t.get("baslangicTarihi") != onceki.get("baslangicTarihi")
         if durum == 150 and yeni:
+            if aciklama != son_aciklama:
+                gunluk("Luca: " + aciklama)
             break
         if yeni and durum not in (100, 150, None):   # yalnız bizim isteğimizin durumu değerlendirilir
-            raise LucaHatasi(f"{ad}: Luca rapor hatası (durum {durum}): {aciklama}")
+            # İş bitmiş (bitiş zamanı var) ve dosya yoksa beklemenin anlamı yok: rapor yeniden istenir (rapor_al).
+            # Bitiş zamanı yoksa durum geçici olabilir: 20 saniye kesintisiz sürerse kesin sayılır.
+            hata_basi = hata_basi or time.time()
+            if t.get("bitisTarihi") or time.time() - hata_basi >= 20:
+                raise (RaporHazirlanamadi if durum == 999 else LucaHatasi)(f"{ad}: Luca rapor hatası (durum {durum}): {aciklama}")
+            continue
+        hata_basi = None
+        if aciklama != son_aciklama:
+            gunluk("Luca: " + aciklama)
+            son_aciklama = aciklama
     r = ctx.request.post(_taban(pg) + "genel/rapor_indir.jq",
                          form={"donem_id": str(donem_id), "filename": f"{rapor_tur}_{donem.get('kisa_ad', '')}", "raporTur": rapor_tur},
                          headers={"Referer": _taban(pg) + sayfa}, timeout=300_000)

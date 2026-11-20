@@ -21,10 +21,12 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+import ayar
 import birikim
 import cikti
 import dokum
 import emukellef
+import kdv_kar
 import luca
 import luca_sorgu
 import ozet
@@ -179,7 +181,7 @@ class Isci:
                             self.iptal_istendi.clear()
                         self._olay("calisiyor", True)
                     try:
-                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname"):
+                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname", "kdv_kar_raporu", "rapor_kaydet"):
                             self._log("İşlem başlamadan durduruldu.")
                         else:
                             getattr(self, "_g_" + gorev)(**kw)
@@ -947,6 +949,97 @@ class Isci:
         else:
             self._log(f"HATA: verilen beyanname indirilemedi ({donem}): {bilgi['mesaj']}")
         self._olay("beyanname_bitti", bilgi)
+
+    # ------------------------------------------------------------ KDV ve kâr/zarar raporu (kullanıcı isteği 20.11.2026)
+    def _g_kdv_kar_raporu(self, firma, ay, yil):
+        """Luca'dan ayın mizanı, dönem başından mizan ve Defteri Kebir indirilir (dosyalar firma klasörüne kaydedilir), KDV ve
+        kâr/zarar durumu hesaplanır (kdv_kar.py). Sonuç ("kdvkar_bitti", {...}) olayıyla arayüze gider; ekranda gösterilir."""
+        f, donem = firma, f"{cikti.AYLAR[ay - 1]} {yil}"
+        bilgi = {"firma": f["ad"], "klasor": f["klasor"], "ay": ay, "yil": yil, "donem": donem, "durum": "hata", "mesaj": "", "rapor": None}
+        self._log(f"===== {f['ad']} — {donem}: KDV ve kâr/zarar raporu =====")
+        try:
+            cikti.firma_klasoru(f["klasor"])        # klasör yoksa en başta dur
+            sid = str(f.get("luca_sirket_id") or "").strip()
+            if not sid:
+                raise RuntimeError("Bu firma için Luca firması tanımlı değil.")
+            if not self._acik_mi():
+                self._tarayici_baslat(False)
+                self._log("Tarayıcı arka planda açıldı.")
+            luca_var = self._luca_guncelle()
+            self._durum_bildir()
+            pg = luca.luca_sayfasi(self.ctx) if luca_var else None
+            if pg is None or pg.frame(name="frm4") is None:
+                raise RuntimeError("Luca'ya giriş yapılmamış. 'Luca girişi' ile giriş yapıp düğmeye yeniden basın.")
+            veri, notlar = {}, []
+            for anahtar in ("luca_mizan_ay", "luca_mizan_yil", "luca_kebir"):
+                if self._iptal_mi():
+                    raise Iptal()
+                ad = luca_sorgu.AD[anahtar]
+                self._log(f"{ad} …")
+                try:
+                    s, dosya = luca_sorgu.calistir(anahtar, self.ctx, pg, sid, ay, yil, self._log, self._iptal_mi)
+                except luca.Iptal:
+                    raise Iptal()
+                except luca.LucaHatasi as e:
+                    if anahtar != "luca_kebir" or not self._luca_kontrol():
+                        raise                       # mizan olmadan rapor olmaz; oturum düştüyse de dur
+                    notlar.append(f"Defteri Kebir alınamadı ({str(e)[:120]}); kâr/zarar hesaplanamadı, KDV tutarları brüt alındı.")
+                    self._log(f"UYARI: {ad} alınamadı: {str(e)[:160]}")
+                    continue
+                if dosya:
+                    yol, durum = cikti.luca_kaydet(f["ad"], f["klasor"], yil, ay, dosya["tur"], dosya["bayt"], dosya["bas"], dosya["bit"], self._log)
+                    self._log(f"    {yol.name}: {'zaten vardı (aynı)' if durum == 'ayni' else 'kaydedildi'}")
+                veri[anahtar] = (s, dosya)
+            s_ay, _ = veri["luca_mizan_ay"]
+            s_yil, d_yil = veri["luca_mizan_yil"]
+            kebir = veri.get("luca_kebir")
+            donem_bas = d_yil["bas"]
+            if s_yil["durum"] != "veri":
+                bilgi.update(durum="kayit_yok", mesaj=f"Luca'da {donem_bas:%d.%m.%Y} – {donem} sonu arasında hiç hareket yok; rapor düzenlenemedi.")
+            else:
+                if s_ay["durum"] != "veri":
+                    notlar.append(f"{donem} içinde Luca'da hiç hareket yok (kayıtlar henüz işlenmemiş olabilir).")
+                rapor = kdv_kar.rapor_kur(f["ad"], ay, yil, donem_bas, s_ay["satirlar"], s_yil["satirlar"],
+                                          luca.xlsx_satirlari(kebir[1]["bayt"]) if kebir and kebir[1] else None, notlar)
+                bilgi.update(durum="veri", rapor=rapor)
+        except Iptal:
+            raise
+        except Exception as e:
+            if isinstance(e, luca.LucaHatasi) and not self._luca_kontrol():
+                self.luca = False
+                self._durum_bildir()
+            bilgi["mesaj"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:400]
+        if bilgi["durum"] == "veri":
+            self._log(f"KDV ve kâr/zarar raporu hazır ({donem}): " + "; ".join(f"{e_}: {d_}" for e_, d_, _ in bilgi["rapor"]["ozet"]))
+        else:
+            self._log(("HATA: " if bilgi["durum"] == "hata" else "") + f"KDV ve kâr/zarar raporu ({donem}): {bilgi['mesaj']}")
+        self._olay("kdvkar_bitti", bilgi)
+
+    def _g_rapor_kaydet(self, rapor, firma, klasor, yil, ay, tur):
+        """Ekrandaki raporu dönemin 02_Raporlar klasörüne PDF ya da Excel olarak kaydeder. PDF, ayrı (profilsiz, penceresiz) bir
+        Chrome'da HTML'den üretilir; programın kendi tarayıcısına (E-Mükellef / Luca oturumları) dokunulmaz."""
+        sonuc = {"tur": tur, "yol": None, "hata": ""}
+        try:
+            if tur == "xlsx":
+                bayt = kdv_kar.excel(rapor)
+            else:
+                tarayici = self.p.chromium.launch(channel="chrome", headless=True)
+                try:
+                    sayfa = tarayici.new_page()
+                    sayfa.set_content(kdv_kar.html(rapor, ayar.logo_oku()), wait_until="load")
+                    bayt = sayfa.pdf(format="A4", print_background=True,
+                                     margin={"top": "14mm", "bottom": "14mm", "left": "13mm", "right": "13mm"})
+                finally:
+                    tarayici.close()
+            hedef = cikti.donem_klasoru(klasor, yil, ay, "02_Raporlar", gunluk=self._log)
+            ad = cikti.temiz_ad(f"{firma} {yil}-{ay:02d} KDV ve Kar-Zarar Durumu")
+            yol, _ = cikti.belge_kaydet(hedef, ad, "." + tur, bayt, gunluk=self._log)
+            sonuc["yol"] = str(yol)
+            self._log(f"Rapor kaydedildi: {yol}")
+        except Exception as e:
+            sonuc["hata"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:300]
+            self._log(f"HATA: rapor kaydedilemedi: {sonuc['hata']}")
+        self._olay("rapor_kaydedildi", sonuc)
 
     def _g_son_unut(self, sessiz=True):
         """Kayıt klasörü değişti: son çalıştırmanın 'yalnız hatalıları tekrar dene' durumu unutulur (eski sonuçlar yeni klasöre yazılmasın)."""

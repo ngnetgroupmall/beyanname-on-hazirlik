@@ -28,6 +28,8 @@ AYARLAR = VERI / "ayarlar.json"
 VARSAYILAN_KOK = Path(os.environ.get("KDV_VARSAYILAN_KOK") or r"D:\Claude\Firmalar")
 KOK_ANAHTARI = "firmalar_klasoru"
 ADRES_ANAHTARI = "emukellef_adresi"
+LOGO = VERI / "logo.png"        # ofisin logosu (raporların başlığında); kullanıcı verisindedir, programla / depoyla DAĞITILMAZ
+LOGO_SINIRI = 2_000_000         # bayt
 EMUKELLEF_ALANI = "emukellef.org"
 
 
@@ -53,6 +55,27 @@ def ayar_yaz(**degisiklik):
     gecici.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(gecici, AYARLAR)                 # kendi ayar dosyamız
     return d
+
+
+def logo_oku():
+    """Ofis logosunun (PNG) baytları; logo yoksa, okunamıyorsa ya da PNG değilse None (rapor logosuz düzenlenir)."""
+    try:
+        b = LOGO.read_bytes()
+    except OSError:
+        return None
+    return b if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) <= LOGO_SINIRI else None
+
+
+def logo_kaydet(bayt):
+    """Seçilen logoyu kullanıcı verisine yazar (güvenli değiştirme). PNG değilse / çok büyükse ValueError."""
+    if bayt[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Logo PNG biçiminde olmalı.")
+    if len(bayt) > LOGO_SINIRI:
+        raise ValueError("Logo dosyası çok büyük (en fazla 2 MB).")
+    VERI.mkdir(parents=True, exist_ok=True)
+    gecici = LOGO.with_name(f"{LOGO.name}.{os.getpid()}.tmp")
+    gecici.write_bytes(bayt)
+    os.replace(gecici, LOGO)                    # kendi ayar dosyamız
 
 
 def adres_duzelt(metin):
