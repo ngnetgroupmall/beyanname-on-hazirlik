@@ -184,6 +184,15 @@ def _mesaj(j):
     return _html_metin(m)
 
 
+GIB_YETKI_YOK = re.compile(r"sözleşme\s+bulunmamaktad|sorgulama\s+yapma\s+yetkiniz\s+yok", re.I)
+
+
+def gib_yetki_yok(m):
+    """GİB'in müşavire bu mükellef için sorgu İZNİ vermediğini söyleyen (kalıcı) yanıt mı: müşavir sözleşmesi yok / sorgulama yetkisi yok.
+    Geçici hatalar (zaman aşımı, boş yanıt, gün bazında hata) bu sayılmaz. Bu durumda fatura belgeleri Luca'dan alınabilir (tarayici.py)."""
+    return bool(GIB_YETKI_YOK.search(str(m or "")))
+
+
 def _gecici_hata(m):
     """E-Mükellef'in GİB'e bağlanırken yaşadığı geçici hatalar (bir kez tekrar denenir)."""
     return bool(re.search(r"güvenlik kodu|giriş yapılamad|zaman aşımı|timeout|tekrar deneyin", str(m or ""), re.I))
@@ -968,8 +977,9 @@ def _fatura_sonucu(sorgu, kapsam, kolon_tanimi, tutar_kolonlari, satirlar, sorun
     return _sonuc(sorgu, kapsam, "hata" if (sorunlu or gib_sorun) else "veri", " ".join(notlar), kolonlar, satirlar, toplam)
 
 
-def e_arsiv(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, gunluk=print, bugun=None, isle=None):
-    """E-arşiv faturaları (gelen/giden): (isteğe bağlı) GİB toplu sorgu -> liste -> her fatura için isle(fa, indir)."""
+def e_arsiv(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, gunluk=print, bugun=None, isle=None, bilgi=None):
+    """E-arşiv faturaları (gelen/giden): (isteğe bağlı) GİB toplu sorgu -> liste -> her fatura için isle(fa, indir).
+    bilgi (sözlük) verilirse: GİB sorgu izni yoksa bilgi["gib_yetki_yok"] = GİB'in mesajı."""
     sorgu = f"{YON_ADI[yon]} E-Arşiv Faturalar"
     kapsam = f"Düzenleme ayı {AYLAR[ay - 1]} {yil}"
     sayfa = f"e-arsiv/sorgula/{yon}"
@@ -988,6 +998,8 @@ def e_arsiv(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, 
                 ca = _json(_post(ctx, sayfa, "e-arsiv/sorgula/checkauth", ilk), "checkauth")
                 if not ca.get("success"):
                     gib_sorun = True
+                    if bilgi is not None and gib_yetki_yok(_mesaj(ca)):
+                        bilgi["gib_yetki_yok"] = _mesaj(ca)[:200]
                     notlar.append("GİB toplu sorgu yapılamadı: " + (_mesaj(ca) or "yetki hatası") + " (E-Mükellef'teki mevcut liste kullanıldı).")
                 else:
                     # Aktarım sayfanın yaptığı gibi satıcı VKN'si + belge no ile yapılır (giden'de satıcı firmanın kendisidir)
@@ -1057,8 +1069,9 @@ def e_arsiv(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, 
         return _sonuc(sorgu, kapsam, "hata", " ".join(notlar + [str(e)]))
 
 
-def e_fatura(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, gunluk=print, isle=None):
-    """E-faturalar (gelen/giden): (isteğe bağlı) GİB sorgusu + E-Mükellef'e aktarım -> liste -> her fatura için isle(fa, indir)."""
+def e_fatura(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False, gunluk=print, isle=None, bilgi=None):
+    """E-faturalar (gelen/giden): (isteğe bağlı) GİB sorgusu + E-Mükellef'e aktarım -> liste -> her fatura için isle(fa, indir).
+    bilgi (sözlük) verilirse: GİB sorgu izni yoksa bilgi["gib_yetki_yok"] = GİB'in mesajı."""
     sorgu = f"{YON_ADI[yon]} E-Faturalar"
     kapsam = f"Fatura tarihi {AYLAR[ay - 1]} {yil}"
     sayfa = f"e-fatura/sorgula/{yon}"
@@ -1092,6 +1105,8 @@ def e_fatura(ctx, mid, ay, yil, yon="gelen", guncelle=True, iptal=lambda: False,
                 notlar.append("GİB'de bu dönem için fatura bulunmadı.")
             else:
                 gib_sorun = True
+                if bilgi is not None and gib_yetki_yok(_mesaj(j)):
+                    bilgi["gib_yetki_yok"] = _mesaj(j)[:200]
                 notlar.append("GİB sorgusu yapılamadı: " + (_mesaj(j) or "yanıt yok") + " (E-Mükellef'teki mevcut liste kullanıldı).")
         liste = _efatura_liste(ctx, mid, ay, yil, yon)
         if liste:

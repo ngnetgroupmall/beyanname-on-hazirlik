@@ -3,6 +3,7 @@
 Firma seçimi Luca ekranındaki firma/dönem kutusuyla yapılır (kullanıcının yaptığı gibi).
 Rapor, Luca'nın yeni rapor sistemi üzerinden doğrudan HTTP ile istenir, takip edilir ve indirilir.
 """
+import base64
 import io
 import json
 import re
@@ -829,6 +830,271 @@ def akilli_entegrasyon_listesi(ctx, pg, sirket_id, yon, bas, bit, iptal=lambda: 
     if not bitti:                                  # kesilmiş liste eksiksiz sayılmasın
         raise LucaHatasi("Akıllı Entegrasyon listesi 50 sayfayı aştı; liste tamamlanamadı.")
     return tum
+
+
+# ================================================================ Akıllı Entegrasyon: belge XML'i (kullanıcı kararı 23.11.2026)
+# E-Mükellef'te GİB fatura sorgusu yapılamayan firmada (müşavir sözleşmesi/yetkisi yok) fatura XML'leri buradan alınır.
+# Ekrandaki "göster" simgesinin yaptığı istek kullanılır (javascript/gib530.js goster(obj, 'view')): POST gib530/<entegrasyon türü>.jq,
+# islem='view' -> UBL fatura XML'i. SALT OKUNUR; Luca'da kayıt değişmez. Yalnız GİB e-Belge türleri (e-fatura / e-arşiv).
+# GİB e-Belge kullanıcı kodu/şifresi ekranın kendi kutularından SAYFA İÇİNDE okunur; Python'a, günlüğe, sonuca ALINMAZ.
+AE_BELGE_TURLERI = {("alis", "efatura"): "gib_efatura_alis", ("satis", "efatura"): "gib_efatura_satis",
+                    ("alis", "earsiv"): "gib_ebelge_alis", ("satis", "earsiv"): "gib_ebelge_satis"}
+_AE_ISLEVLER = ("session", "prepareAjaxData")
+_AE_DEGISKENLER = ("menu_tur",)
+
+
+def ae_belge_ekrani(pg, sirket_id, donem_id, tur, bekle_sn=30):
+    """Akıllı Entegrasyon > GİB e-Belge ekranını (tur: AE_BELGE_TURLERI değeri) içerik çerçevesinde açar; çerçeveyi döndürür.
+    Ekran türü, firma ve dönem doğrulanır; GİB e-Belge kullanıcı bilgisi ekranda yoksa LucaHatasi."""
+    if tur not in AE_BELGE_TURLERI.values():
+        raise LucaHatasi(f"Desteklenmeyen Akıllı Entegrasyon türü: {tur}")
+    fr = _cerceve(pg, "frm3")
+    fr.goto(_taban(pg) + "gib530.do?tur=" + tur + "&c_musteri_id=" + _musteri_id(pg), timeout=60_000)
+    son, eksik = time.time() + bekle_sn, None
+    while time.time() < son:
+        fr = _cerceve(pg, "frm3")
+        try:
+            eksik = fr.evaluate("""(adlar) => adlar.filter(a => { try { return typeof eval(a) === 'undefined'; } catch (e) { return true; } })""",
+                                list(_AE_ISLEVLER + _AE_DEGISKENLER))
+        except Exception:
+            eksik = None                            # sayfa geçiş hâlinde
+        if eksik == []:
+            break
+        time.sleep(0.5)
+    else:
+        raise LucaHatasi("Luca Akıllı Entegrasyon ekranı beklenen yapıda açılmadı" + (f" (eksik: {', '.join(eksik)})" if eksik else "") + ".")
+    ae_belge_ekrani_dogrula(fr, sirket_id, donem_id, tur)
+    return fr
+
+
+def ae_belge_ekrani_dogrula(fr, sirket_id, donem_id, tur):
+    """İstekten hemen önce: ekran türü + firma + dönem beklenenle aynı mı, GİB e-Belge kullanıcı bilgisi dolu mu (değerler okunmaz)."""
+    d = fr.evaluate("""() => {
+        const k = document.querySelector('#gib_kullanici_adi'), s = document.querySelector('#gib_sifre');
+        return {tur: String(menu_tur), sirket: String(session('SIRKET_ID')), donem: String(session('DONEM_ID')),
+                kullanici: !!(k && k.value), sifre: !!(s && s.value)};
+    }""")
+    if d["tur"] != tur:
+        raise LucaHatasi(f"Luca'da beklenen ekran ({tur}) yerine başka ekran açık ({d['tur']}).")
+    if d["sirket"] != str(sirket_id) or d["donem"] != str(donem_id):
+        raise LucaHatasi("Luca Akıllı Entegrasyon ekranında açık firma/dönem beklenenle aynı değil; işlem durduruldu.")
+    if not d["kullanici"] or not d["sifre"]:
+        raise LucaHatasi("Luca'da bu firma için GİB e-Belge kullanıcı adı/şifresi tanımlı değil (Akıllı Entegrasyon > GİB e-Belge ekranı); "
+                         "belge görüntülenemez.")
+
+
+def ae_belge_xml(fr, belge, tur, sirket_id, donem_id):
+    """Tek belgenin XML'i (özgün baytlarıyla). belge: akilli_entegrasyon_listesi satırı; tur: ekranın türü (belgenin entegrasyon türü
+    aynı olmalı). İstekten hemen önce ekran türü + firma + dönem sayfa içinde yeniden doğrulanır. Döner: (bayt | None, hata metni). Hata metni kısa ve arındırılmıştır (GİB kullanıcı bilgisi içermez); ham yanıt taşınmaz.
+    Luca oturumu düşmüşse (JSON/XML yerine giriş sayfası) LucaHatasi."""
+    if str(belge.get("entegrasyon_tur") or "") != tur:
+        return None, "belgenin kaynağı bu ekranla aynı değil"
+    r = fr.evaluate("""async ([belge, tur, sirket, donem]) => {
+        const ku = document.querySelector('#gib_kullanici_adi'), si = document.querySelector('#gib_sifre');
+        const gizli = [ku && ku.value, si && si.value].filter(x => x && x.length >= 3);
+        const temiz = (m) => { let t = String(m == null ? '' : m); for (const g of gizli) t = t.split(g).join('•••'); return t.slice(0, 160); };
+        const out = {durum: 0, xml: null, hata: null, oturum: true};
+        try {
+            if (String(menu_tur) !== tur || String(session('SIRKET_ID')) !== sirket || String(session('DONEM_ID')) !== donem) {
+                out.hata = 'Luca ekranı/firma/dönem değişmiş'; out.degisti = true; return out;
+            }
+            const data = {islem: 'view', gibKullaniciKodu: ku ? ku.value : '', gibSifre: si ? si.value : '',
+                          bayiNo: belge.bayi_no || belge.bayiNo, onayDurumu: belge.onay_durumu || belge.onayDurumu, ettn: belge.ettn,
+                          belgeTuru: belge.belge_turu || belge.belgeTuru,
+                          belgeNumarasi: belge.belge_numarasi || belge.belgeNumarasi || belge.evrak_no,
+                          entegrator: belge.entegrator, url: belge.url, _u: 'ea530:view'};
+            const kes = new AbortController();
+            const sayac = setTimeout(() => kes.abort(), 90000);     // yanıt gelmezse işçi kilitlenmesin
+            const res = await fetch('gib530/' + tur + '.jq?t=' + Date.now(), {
+                method: 'POST', credentials: 'same-origin', redirect: 'error', signal: kes.signal,
+                headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                body: prepareAjaxData(data, tur)});
+            out.durum = res.status;
+            const buf = new Uint8Array(await res.arrayBuffer());
+            clearTimeout(sayac);
+            const bas = new TextDecoder('utf-8').decode(buf.slice(0, 600)).replace(/^\\uFEFF/, '').trimStart();
+            if (res.status !== 200) { out.hata = 'HTTP ' + res.status; return out; }
+            if (bas.startsWith('{') || bas.startsWith('[')) {       // HTTP 200 ile dönen hata yanıtı (JSON)
+                let j = null;
+                try { j = JSON.parse(new TextDecoder('utf-8').decode(buf)); } catch (e) {}
+                out.hata = temiz((j && (j.error || j.warning || j.message)) || 'beklenmeyen JSON yanıtı');
+                return out;
+            }
+            if (/^<(!doctype\\s+html|html)/i.test(bas)) { out.oturum = false; out.hata = 'HTML yanıtı (oturum düşmüş olabilir)'; return out; }
+            if (!bas.startsWith('<')) { out.hata = 'XML olmayan yanıt'; return out; }
+            let s = '';
+            for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+            out.xml = btoa(s);
+        } catch (e) {
+            out.hata = temiz(e && e.name === 'AbortError' ? 'Luca 90 sn içinde yanıt vermedi' : 'istek yapılamadı: ' + (e && e.name ? e.name : 'hata'));
+        }
+        return out;
+    }""", [belge, tur, str(sirket_id), str(donem_id)])
+    if r.get("degisti"):
+        raise LucaHatasi("Luca'da açık ekran/firma/dönem değişmiş; belge indirme durduruldu (tarayıcıda Luca'ya dokunmayın).")
+    if not r.get("oturum", True):
+        raise LucaHatasi("Luca belge isteğine HTML yanıt verdi (Luca oturumu düşmüş olabilir).")
+    if r.get("xml"):
+        try:
+            return base64.b64decode(r["xml"]), ""
+        except Exception:
+            return None, "yanıt çözülemedi"
+    return None, str(r.get("hata") or "boş yanıt")[:160]
+
+
+def ae_varsayilan_xslt(fr):
+    """Luca'nın varsayılan fatura görünüm şablonu (XML'de gömülü şablon yoksa PDF için). Metin ya da None."""
+    try:
+        return fr.evaluate("""async () => {
+            const kes = new AbortController();
+            setTimeout(() => kes.abort(), 30000);
+            const res = await fetch('gib530/get_default_xslt.jq', {method: 'POST', credentials: 'same-origin', redirect: 'error',
+                                                                   signal: kes.signal, headers: {'X-Requested-With': 'XMLHttpRequest'}});
+            if (res.status !== 200) return null;
+            const j = await res.json();
+            return j && typeof j.data === 'string' && j.data.indexOf('<') >= 0 ? j.data : null;
+        }""")
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- Akıllı Entegrasyon: "GİB'den Getir" (kullanıcı kararı 23.11.2026)
+# Fatura yedeğinde belgeler listelenmeden önce ekranın KENDİ indir() işlevi çağrılır (javascript/gib530.js): GİB e-Belge gün gün
+# sorgulanır, bulunan belgeler Luca'nın Akıllı Entegrasyon LİSTESİNE kaydedilir (gib530/fatura_kaydet.jq; kayıtlı belge yeniden
+# eklenmez, "sistemde kayıtlıdır" uyarısı döner). MUHASEBE FİŞİ KESİLMEZ. Yalnız dört GİB e-Belge türü (AE_BELGE_TURLERI).
+# Tarih aralığı ekrandaki pencere yerine ekranın `indirTarih` değişkeniyle verilir; Luca 31 günden uzun aralığı reddeder.
+_AE_GETIR_ISLEVLER = ("indir", "fatura_kaydet", "gib_ebelge_alis")
+
+
+def ae_getir_baslat(fr, tur, sirket_id, donem_id, bas, bit):
+    """Ekranın indir() işlevini bas–bit (date) aralığı için BAŞLATIR ve hemen döner; ilerleme ae_getir_durum ile izlenir.
+    Döner: çalıştırma kimliği. Ekran/firma/dönem beklenen değilse ya da ekran işlevleri yoksa LucaHatasi."""
+    r = fr.evaluate("""([tur, sirket, donem, bas, bit, adlar]) => {
+        const eksik = adlar.filter(a => { try { return typeof eval(a) !== 'function'; } catch (e) { return true; } });
+        if (eksik.length || typeof Luca === 'undefined' || typeof Luca.board !== 'function') return {hata: 'ekran', eksik: eksik};
+        if (String(menu_tur) !== tur || String(session('SIRKET_ID')) !== sirket || String(session('DONEM_ID')) !== donem) return {hata: 'degisti'};
+        if (window.__kdvGetir && !window.__kdvGetir.bitti) return {hata: 'suruyor'};
+        const ku = document.querySelector('#gib_kullanici_adi'), si = document.querySelector('#gib_sifre');
+        const gizli = [ku && ku.value, si && si.value].filter(x => x && x.length >= 3);
+        const temiz = (m) => { let t = String(m == null ? '' : m).replace(/<[^>]*>/g, ' '); for (const g of gizli) t = t.split(g).join('•••'); return t.trim().slice(0, 240); };
+        const gun = (t) => { const x = /(\\d{2})\\/(\\d{2})\\/(\\d{4})/.exec(t || ''); return x ? x[3] + x[2] + x[1] : ''; };
+        const basG = gun(bas), bitG = gun(bit);
+        const d = {kimlik: String(Date.now()) + Math.random().toString(16).slice(2, 8), bitti: false, adim: 0, bulunan: null,
+                   kaydedilen: 0, kayitli: 0, hata: 0, bos_gun: 0, hatalar: [], kesildi: false, son: ''};
+        window.__kdvGetir = d;
+        const asilBoard = Luca.board, asilTarih = (typeof indirTarih === 'undefined') ? null : indirTarih;
+        const geri = () => { if (Luca.board === sarili) Luca.board = asilBoard; try { indirTarih = asilTarih; } catch (e) {} };
+        const sarili = function (m, t) {
+            try {
+                if (window.__kdvGetir === d && !d.bitti && m !== '<') {
+                    const s = String(m == null ? '' : m);
+                    d.adim++;
+                    d.son = temiz(s).replace(/[0-9A-Za-z]{3}20\\d{11}/g, 'belge');
+                    const ok = s.match(/\\[OK\\]\\s*(\\d+)\\s*adet/);
+                    if (ok) d.bulunan = parseInt(ok[1], 10);
+                    if (s.indexOf('İşlem kesildi') >= 0) d.kesildi = true;
+                    if (t === 'success' && !ok) { if (/kaydedildi/i.test(s)) d.kaydedilen++; }
+                    else if (t === 'warning') { if (/kayıtlı/i.test(s)) d.kayitli++; }
+                    else if (t === 'error') {
+                        // Ekranın gün gün döngüsü bitiş gününden bir SONRAKİ günü de sorguluyor; aralık dışındaki günün hatası sayılmaz
+                        const sg = /Sorgulama Tarihi/i.test(s) ? gun(s) : '';
+                        if (/aralığında\\s+(fatura|belge)\\s+bulunamad/i.test(s) || (sg && (sg < basG || sg > bitG))) d.bos_gun++;
+                        else { d.hata++; if (d.hatalar.length < 5) d.hatalar.push(temiz(s)); }
+                    }
+                }
+            } catch (e) {}
+            return asilBoard.apply(this, arguments);
+        };
+        Luca.board = sarili;
+        d.geri = geri;
+        try {
+            indirTarih = {baslangic: bas, bitis: bit};
+            indir(tur, null, null, false, function () { if (window.__kdvGetir === d) { d.bitti = true; } geri(); });
+        } catch (e) {
+            d.bitti = true; d.hata++; d.hatalar.push('getirme başlatılamadı');
+            geri();
+        }
+        return {hata: null, kimlik: d.kimlik};
+    }""", [tur, str(sirket_id), str(donem_id), f"{bas:%d/%m/%Y}", f"{bit:%d/%m/%Y}", list(_AE_GETIR_ISLEVLER)])
+    if r.get("hata") == "ekran":
+        raise LucaHatasi("Luca Akıllı Entegrasyon ekranında 'GİB'den Getir' işlevleri bulunamadı" +
+                         (f" (eksik: {', '.join(r.get('eksik') or [])})" if r.get("eksik") else "") + ".")
+    if r.get("hata") == "degisti":
+        raise LucaHatasi("Luca'da açık ekran/firma/dönem beklenenle aynı değil; 'GİB'den Getir' başlatılmadı.")
+    if r.get("hata") == "suruyor":
+        raise LucaHatasi("Luca'da süren bir 'GİB'den Getir' işlemi var; yenisi başlatılmadı.")
+    return r["kimlik"]
+
+
+def ae_getir_durum(fr, kimlik, tur, sirket_id, donem_id):
+    """Süren getirmenin durumu: {bitti, adim, bulunan, kaydedilen, kayitli, hata, bos_gun, hatalar, kesildi, son} ya da
+    {kayip: True} (ekran yenilenmiş / başka çalıştırma) / {degisti: True} (firma, dönem ya da ekran değişmiş)."""
+    try:
+        return fr.evaluate("""([kimlik, tur, sirket, donem]) => {
+            const d = window.__kdvGetir;
+            if (!d || d.kimlik !== kimlik) return {kayip: true};
+            let degisti = false;
+            try { degisti = String(menu_tur) !== tur || String(session('SIRKET_ID')) !== sirket || String(session('DONEM_ID')) !== donem; } catch (e) { degisti = true; }
+            return {bitti: d.bitti, adim: d.adim, bulunan: d.bulunan, kaydedilen: d.kaydedilen, kayitli: d.kayitli, hata: d.hata,
+                    bos_gun: d.bos_gun, hatalar: d.hatalar.slice(), kesildi: d.kesildi, son: d.son, degisti: degisti};
+        }""", [kimlik, tur, str(sirket_id), str(donem_id)])
+    except Exception:
+        return {"kayip": True}
+
+
+def ae_getir_kes(pg, fr):
+    """Süren getirme zincirini keser: ekranın sarmalı geri alınır ve içerik çerçevesi yeniden yüklenir (bekleyen istekler bırakılır).
+    Sunucuya ulaşmış kayıt istekleri tamamlanmış olabilir; Luca'ya o ana kadar kaydedilen belgeler kalır."""
+    try:
+        fr.evaluate("() => { const d = window.__kdvGetir; if (d) { d.bitti = true; if (d.geri) d.geri(); } }")
+    except Exception:
+        pass
+    try:
+        _cerceve(pg, "frm3").goto("about:blank", timeout=15_000)
+    except Exception:
+        pass
+
+
+def ae_getir(pg, fr, tur, sirket_id, donem_id, bas, bit, gunluk, iptal=lambda: False, durgun_sn=300, toplam_sn=2700, ad=""):
+    """bas–bit aralığı için 'GİB'den Getir' yapar ve bitmesini bekler. Döner: {tamam, kaydedilen, kayitli, bulunan, hata, hatalar, not}.
+    İptal istenirse zincir kesilir ve Iptal yükseltilir. tamam=False ise 'not' nedeni söyler (kısmi kayıt olmuş olabilir)."""
+    kimlik = ae_getir_baslat(fr, tur, sirket_id, donem_id, bas, bit)
+    basla = son_degisim = time.time()
+    son_adim, son_gunluk = -1, time.time()
+    d = {}
+    while True:
+        time.sleep(2)
+        d = ae_getir_durum(fr, kimlik, tur, sirket_id, donem_id)
+        simdi = time.time()
+        if iptal():
+            ae_getir_kes(pg, fr)
+            raise Iptal("İptal edildi (Luca'ya o ana kadar getirilen belgeler Luca'da kalır).")
+        if d.get("kayip") or d.get("degisti"):
+            ae_getir_kes(pg, fr)
+            return {"tamam": False, "kaydedilen": 0, "kayitli": 0, "bulunan": None, "hata": 0, "hatalar": [],
+                    "not": "Luca ekranı/firma/dönem getirme sırasında değişti; işlem kesildi (kısmi kayıt olmuş olabilir)."}
+        if d.get("bitti"):
+            break
+        if d["adim"] != son_adim:
+            son_adim, son_degisim = d["adim"], simdi
+        if simdi - son_gunluk >= 30:
+            son_gunluk = simdi
+            gunluk(f"  {ad}GİB'den getiriliyor ({bas:%d.%m}–{bit:%d.%m.%Y}): {d['kaydedilen']} yeni, {d['kayitli']} zaten kayıtlı"
+                   + (f", {d['bulunan']} belge bulundu" if d.get("bulunan") is not None else " (GİB sorgulanıyor)") + "…")
+        if simdi - son_degisim > durgun_sn or simdi - basla > toplam_sn:
+            ae_getir_kes(pg, fr)
+            neden = f"{durgun_sn // 60} dk ilerleme olmadı" if simdi - son_degisim > durgun_sn else f"{toplam_sn // 60} dk içinde bitmedi"
+            return {"tamam": False, "kaydedilen": d.get("kaydedilen", 0), "kayitli": d.get("kayitli", 0), "bulunan": d.get("bulunan"),
+                    "hata": d.get("hata", 0), "hatalar": d.get("hatalar") or [],
+                    "not": f"Luca 'GİB'den Getir' {neden}; işlem kesildi (kısmi kayıt olmuş olabilir)."}
+    sonuc = {"tamam": True, "kaydedilen": d["kaydedilen"], "kayitli": d["kayitli"], "bulunan": d.get("bulunan"), "hata": d["hata"],
+             "hatalar": d.get("hatalar") or [], "not": ""}
+    if d.get("kesildi") or d["hata"] or d.get("bulunan") is None:
+        sonuc["tamam"] = False
+        sonuc["not"] = ("Luca 'GİB'den Getir' hata verdi" + (" ve işlemi kesti" if d.get("kesildi") else "")
+                        + (": " + "; ".join(sonuc["hatalar"][:3]) if sonuc["hatalar"] else
+                           (" (GİB sorgusu tamamlanmadı)." if d.get("bulunan") is None else ".")))
+    return sonuc
 
 
 # ================================================================ UTTS akaryakıt giderleri (kullanıcı kararı 19.11.2026)

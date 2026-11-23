@@ -126,10 +126,11 @@ def xml_coz(bayt):
                 kdv[anahtar] = (m + matrah, v + vergi)
             else:
                 diger[ad] = diger.get(ad, Decimal(0)) + vergi
-    tevkifat, tev_kod = Decimal(0), []
+    tevkifat, tev_matrah, tev_kod = Decimal(0), Decimal(0), []
     for wt in (c for c in kok if _ad(c) == "WithholdingTaxTotal"):
         tevkifat += _tutar(_cocuk(wt, "TaxAmount")) or Decimal(0)
         for st in (c for c in wt if _ad(c) == "TaxSubtotal"):
+            tev_matrah += _tutar(_cocuk(st, "TaxableAmount")) or Decimal(0)
             kod = _metin(_yol(st, "TaxCategory", "TaxScheme", "TaxTypeCode"))
             oran = _metin(_cocuk(st, "Percent"))
             if kod:
@@ -143,7 +144,7 @@ def xml_coz(bayt):
         "mal_hizmet": _tutar(_cocuk(lmt, "LineExtensionAmount")), "iskonto": _tutar(_cocuk(lmt, "AllowanceTotalAmount")),
         "vergi_haric": _tutar(_cocuk(lmt, "TaxExclusiveAmount")), "vergi_dahil": _tutar(_cocuk(lmt, "TaxInclusiveAmount")),
         "odenecek": _tutar(_cocuk(lmt, "PayableAmount")), "kdv": kdv, "diger_vergi": diger,
-        "tevkifat": tevkifat, "tevkifat_kodu": ", ".join(tev_kod),
+        "tevkifat": tevkifat, "tevkifat_kodu": ", ".join(tev_kod), "tevkifat_matrah": tev_matrah,
     }
 
 

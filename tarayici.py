@@ -30,6 +30,7 @@ import kdv_kar
 import luca
 import luca_sorgu
 import ozet
+import takip
 
 PROFIL = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "KdvOnHazirlik" / "chrome-profil"
 
@@ -628,7 +629,9 @@ class Isci:
             self._olay("giris_sonuc", {"durum": "hata", "mesaj": f"Doğrulama gönderilemedi: {m}"})
 
     # ------------------------------------------------------------ faturalar: tek tek indir + kaydet + döküm kaydı
-    def _fatura_isleyici(self, f, ay, yil, yon, tur, secim, dokum_kayitlari, dosyalar):
+    def _fatura_isleyici(self, f, ay, yil, yon, tur, secim, dokum_kayitlari, dosyalar, xml_al=None, pdf_al=None):
+        """xml_al(fa) -> bayt|None ve pdf_al(fa, xml) -> bayt|None verilirse belge E-Mükellef yerine onlarla alınır (Luca yedeği);
+        doğrulama, diskteki dosyayı yeniden indirmeme, kayıt ve döküm kaydı aynıdır. xml_al başarısızlık nedenini fa["neden"]e yazar."""
         firma_vkn = f.get("vkn") or None
         pdf_iste = secim.get("pdf", False)
         uyari_say = [0]
@@ -641,11 +644,14 @@ class Isci:
             if not ok:
                 return False, neden
             beklenen = re.sub(r"\D", "", str(fa["liste"].get("karsi_vkn") or ""))
-            if beklenen:
+            if beklenen or fa.get("ettn"):
                 try:
                     x = dokum.xml_coz(bayt)
                 except ValueError as e:
                     return False, str(e)
+                if fa.get("ettn") and (x.get("ettn") or "").strip().lower() != fa["ettn"]:
+                    return False, "XML'deki ETTN listedekiyle aynı değil"
+            if beklenen:
                 gercek = x["satici_vkn"] if yon == "gelen" else x["alici_vkn"]
                 if (gercek or kesin) and gercek != beklenen:
                     return False, f"karşı taraf VKN'si tutmuyor ({gercek} ≠ {beklenen})"
@@ -680,8 +686,10 @@ class Isci:
                 elif not fa["id"]:
                     xml_d = "İNDİRİLEMEDİ"
                 else:
-                    xb = emukellef.fatura_belgesi(self.ctx, tur, fa["id"], "xml")
-                    ok, neden = uygun(xb, fa) if xb else (False, "boş yanıt")
+                    xb = xml_al(fa) if xml_al else emukellef.fatura_belgesi(self.ctx, tur, fa["id"], "xml")
+                    ok, neden = uygun(xb, fa) if xb else (False, fa.get("neden") or "boş yanıt")
+                    if not ok:
+                        fa["neden"] = neden
                     if ok:
                         xml, xml_d = xb, "indirildi"
                     else:
@@ -701,7 +709,7 @@ class Isci:
             elif not fa["id"]:
                 pdf_d = "İNDİRİLEMEDİ"
             else:
-                pdf = emukellef.fatura_belgesi(self.ctx, tur, fa["id"], "pdf")
+                pdf = pdf_al(fa, xml) if pdf_al else emukellef.fatura_belgesi(self.ctx, tur, fa["id"], "pdf")
                 pdf_d = "indirildi" if pdf else "İNDİRİLEMEDİ"
             dosya = (xml_yol or pdf_yol).name if (xml_yol or pdf_yol) else ""
             mevcut = xml_yol or pdf_yol
@@ -728,6 +736,321 @@ class Isci:
         sayac = {}
         isle.sayac = sayac
         return isle
+
+    # ------------------------------------------------------------ faturalar: Luca Akıllı Entegrasyon yedeği (kullanıcı kararı 23.11.2026)
+    _BOS_SAYFA = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>'
+    _XSLT_JS = r"""async ([xml, varsayilan]) => {
+        if (typeof XSLTProcessor === 'undefined') return {hata: 'xslt_destegi_yok'};
+        const d = new DOMParser().parseFromString(xml, 'text/xml');
+        if (d.getElementsByTagName('parsererror').length) return {hata: 'xml_okunamadi'};
+        let x = null;
+        if (!varsayilan) {
+            for (const e of d.getElementsByTagName('*')) {
+                if (e.localName === 'EmbeddedDocumentBinaryObject' && /\.xslt$/i.test(e.getAttribute('filename') || '')) { x = e.textContent; break; }
+            }
+            if (!x) return {hata: 'xslt_yok'};
+            try {
+                const b = Uint8Array.from(atob(x.replace(/\s+/g, '')), c => c.charCodeAt(0));
+                x = new TextDecoder('utf-8').decode(b);
+            } catch (e) { return {hata: 'xslt_yok'}; }
+        } else {
+            x = varsayilan;
+        }
+        const xs = new DOMParser().parseFromString(x.replace(/^﻿/, ''), 'text/xml');
+        if (xs.getElementsByTagName('parsererror').length) return {hata: 'xslt_yok'};
+        if (xs.getElementsByTagNameNS('http://www.w3.org/1999/XSL/Transform', 'import').length) return {hata: 'xslt_yok'};
+        let f = null;
+        try { const p = new XSLTProcessor(); p.importStylesheet(xs); f = p.transformToFragment(d, document); } catch (e) { f = null; }
+        if (!f || !f.childNodes.length) return {hata: 'xslt_yok'};
+        document.body.innerHTML = '';
+        document.body.appendChild(f);
+        await Promise.all(Array.from(document.images).map(i => i.decode ? i.decode().catch(() => {}) : null));
+        return {hata: null, uzunluk: document.body.innerText.trim().length};
+    }"""
+
+    @staticmethod
+    def _yedek_satiri(kolonlar, kayit, pdf_s, xml_s):
+        """Luca'dan alınan belgenin sonuç satırı, E-Mükellef listesinin kolon düzeninde (değerler XML'den; XML yoksa listeden)."""
+        def f(v):
+            try:
+                return round(float(v), 2)
+            except (TypeError, ValueError):
+                return 0.0
+        kdv = kayit.get("kdv") or {}
+
+        def oran_toplam(*oranlar):
+            return (f(sum((kdv[o][0] for o in kdv if o in oranlar), 0)), f(sum((kdv[o][1] for o in kdv if o in oranlar), 0)))
+        t = str(kayit.get("tarih") or "")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):
+            t = f"{t[8:10]}.{t[5:7]}.{t[:4]}"
+        vergi = f(sum((v for _, v in kdv.values()), 0) + sum((kayit.get("diger_vergi") or {}).values(), 0))
+        m20, k20 = oran_toplam("18", "20")
+        m10, k10 = oran_toplam("8", "10")
+        m1, k1 = oran_toplam("1")
+        deger = {"Satıcı": kayit.get("satici") or "", "Satıcı VKN": kayit.get("satici_vkn") or "", "Alıcı": kayit.get("alici") or "",
+                 "Alıcı VKN": kayit.get("alici_vkn") or "", "Senaryo": kayit.get("senaryo") or "", "Tip": kayit.get("tip") or "",
+                 "Belge no": kayit.get("no") or "", "Düzenleme tarihi": t, "Para birimi": kayit.get("para") or "",
+                 "Vergi hariç": f(kayit.get("vergi_haric")), "Vergiler": vergi, "Vergi": vergi, "İskonto": f(kayit.get("iskonto")),
+                 "Ödenecek": f(kayit.get("odenecek")), "KDV oranı": ", ".join("%" + o for o in sorted(kdv, key=lambda o: (len(o), o))),
+                 "Tevkifat": kayit.get("tevkifat_kodu") or "", "Tevkifat matrahı": f(kayit.get("tevkifat_matrah")),
+                 "Matrah %18-20": m20, "KDV %18-20": k20, "Matrah %8-10": m10, "KDV %8-10": k10, "Matrah %1": m1, "KDV %1": k1}
+        return [deger.get(k, "") for k in kolonlar] + [pdf_s, xml_s]
+
+    def _luca_getir(self, pg, sid, donem_id, ekran_tur, ay, yil, ad):
+        """Luca'da 'GİB'den Getir' (kullanıcı kararı 23.11.2026): beyan ayı + sonraki ayın 1'i–15'i (bugünü geçmez), ekranın kendi
+        işleviyle; belgeler Luca'nın Akıllı Entegrasyon listesine eklenir (muhasebe fişi kesilmez). Döner: {not, sorun, tam}.
+        Aynı firma/dönem/tür için sonuç 20 dk saklanır: otomatik tekrar denemeleri getirmeyi yeniden BAŞLATMAZ (kısmi kayıttan
+        sonra üst üste getirme olmasın)."""
+        onbellek = self.__dict__.setdefault("_getir_onbellek", {})
+        k = (str(sid), yil, ay, ekran_tur)
+        e = onbellek.get(k)
+        if e and time.time() - e[0] < 1200:
+            return e[1]
+        araliklar, notlar = luca_sorgu.utts_araliklari(ay, yil)
+        yapilan, sorun, yeni, kayitli = [], False, 0, 0
+        try:
+            d = luca.donem_bilgisi(self.ctx, pg, sid, donem_id)
+            d_bas, d_bit = luca_sorgu._donem_tarihi(d, "donem_bas"), luca_sorgu._donem_tarihi(d, "donem_bit")
+            for bas, bit in araliklar:
+                if d_bas and d_bit and not (d_bas <= bas and bit <= d_bit):
+                    notlar.append(f"{bas:%d.%m}–{bit:%d.%m.%Y} Luca'da açık mali dönemin dışında; bu aralık getirilmedi.")
+                    continue
+                fr = luca.ae_belge_ekrani(pg, sid, donem_id, ekran_tur)
+                self._log(f"  {ad}: Luca'da GİB'den getiriliyor ({bas:%d.%m.%Y}–{bit:%d.%m.%Y})…")
+                r = luca.ae_getir(pg, fr, ekran_tur, sid, donem_id, bas, bit, self._log, self._iptal_mi, ad=ad + ": ")
+                yeni += r["kaydedilen"]
+                kayitli += r["kayitli"]
+                if r["tamam"]:
+                    yapilan.append(f"{bas:%d.%m}–{bit:%d.%m.%Y}")
+                else:
+                    notlar.append(f"{bas:%d.%m}–{bit:%d.%m.%Y}: " + r["not"])
+                    if bas.month == ay:             # beyan ayının kendisi tam getirilemedi: liste eksik olabilir
+                        sorun = True
+                    break
+        except luca.Iptal:
+            raise
+        except luca.LucaHatasi as e:
+            sorun = True
+            notlar.append("Luca 'GİB'den Getir' yapılamadı: " + str(e).splitlines()[0][:200])
+        metin = (f"Luca'da GİB'den Getir yapıldı ({', '.join(yapilan)}): {yeni} yeni belge, {kayitli} zaten kayıtlı. " if yapilan else "") \
+            + " ".join(notlar)
+        sonuc = {"not": metin.strip(), "sorun": sorun, "tam": bool(yapilan) and not sorun}
+        self._log(f"  {ad}: " + (sonuc["not"] or "GİB'den getirilecek aralık yok."))
+        onbellek[k] = (time.time(), sonuc)
+        return sonuc
+
+    def _luca_fatura_yedegi(self, anahtar, f, ay, yil, secim, s, kayitlar, dosyalar, gib_mesaj, sayac):
+        """E-Mükellef'te GİB fatura sorgusu İZNİ olmayan firmada (müşavir sözleşmesi/yetkisi yok) belgeleri Luca Akıllı
+        Entegrasyon'daki GİB e-Belge kayıtlarından alır: XML Luca'nın "göster" isteğiyle (salt okunur), PDF (istenirse) XML'in
+        görünüm şablonundan üretilir. Belgeler E-Mükellef sonucuyla belge bazında birleştirilir. Luca kullanılamıyorsa ya da
+        liste boşsa mevcut (hata) sonuç korunur, nedeni mesaja eklenir. Tüm belgeler alınırsa sonuç "veri" olur; mesaj kaynağı ve
+        sınırını söyler. Listelemeden önce Luca'da 'GİB'den Getir' yapılır (_luca_getir)."""
+        yon, tur = FATURA_SORGULARI[anahtar]
+        ad = s["sorgu"]
+
+        getir = {"not": "", "sorun": False, "tam": False}
+
+        def koru(neden):
+            s["mesaj"] += " Luca yedeği kullanılamadı: " + neden + (" " + getir["not"] if getir["not"] else "")
+            self._log(f"    Luca yedeği kullanılamadı: {neden}")
+            return s
+
+        sid = str(f.get("luca_sirket_id") or "").strip()
+        firma_vkn = re.sub(r"\D", "", str(f.get("vkn") or ""))
+        if not sid:
+            return koru("bu firma için Luca firması tanımlı değil.")
+        if not firma_vkn:
+            return koru("firmanın VKN/TCKN'si tanımlı değil (belgeler doğrulanamaz).")
+        if not self._luca_guncelle(sessiz=True):
+            self._durum_bildir()
+            return koru("Luca'ya giriş yapılmamış ('Luca girişi' ile girip sorguyu yeniden çalıştırın).")
+        self._durum_bildir()
+        pg = luca.luca_sayfasi(self.ctx)
+        if pg is None or pg.frame(name="frm4") is None:
+            return koru("Luca penceresi açık değil.")
+        luca_yon = "alis" if yon == "gelen" else "satis"
+        ekran_tur = luca.AE_BELGE_TURLERI[(luca_yon, tur)]
+        diger_turler = set(luca.AE_BELGE_TURLERI.values()) - {ekran_tur}
+        self._log(f"  {ad}: E-Mükellef'te GİB sorgu izni yok; belgeler Luca Akıllı Entegrasyon'dan alınıyor…")
+        try:
+            donem_id = luca.firma_sec(pg, sid, yil, ay, self._log, self._iptal_mi)
+            getir.update(self._luca_getir(pg, sid, donem_id, ekran_tur, ay, yil, ad))
+            bas, bit = luca_sorgu.ay_araligi(ay, yil)
+            liste = luca.akilli_entegrasyon_listesi(self.ctx, pg, sid, luca_yon, bas, bit, self._iptal_mi)
+            bu = [b for b in liste if str(b.get("entegrasyon_tur") or "") == ekran_tur]
+            baska_belgeler = [b for b in liste if str(b.get("entegrasyon_tur") or "") not in diger_turler | {ekran_tur}]
+            if not bu:
+                return koru(f"Luca Akıllı Entegrasyon'da {cikti.AYLAR[ay - 1]} {yil} için bu türde GİB e-Belge kaydı yok "
+                            "(Luca'da 'GİB'den Getir' yapılmamış olabilir).")
+            fr = luca.ae_belge_ekrani(pg, sid, donem_id, ekran_tur)
+        except luca.Iptal:
+            raise
+        except luca.LucaHatasi as e:
+            if not self._luca_kontrol():
+                self.luca = False
+                self._durum_bildir()
+                return koru("Luca oturumu düştü.")
+            return koru("Luca: " + str(e).splitlines()[0][:200])
+
+        kolon_tanimi = emukellef.EARSIV_KOLON if tur == "earsiv" else emukellef.EFATURA_KOLON
+        tutar_kolon = emukellef.EARSIV_TUTAR if tur == "earsiv" else emukellef.EFATURA_TUTAR
+        kolonlar = list(kolon_tanimi.values())
+        pdf_iste = secim.get("pdf", False)
+        i_no, i_svkn, i_tarih = kolonlar.index("Belge no"), kolonlar.index("Satıcı VKN"), kolonlar.index("Düzenleme tarihi")
+
+        def sira(t):
+            t = str(t)
+            return t[6:10] + t[3:5] + t[:2]
+        # E-Mükellef'in (eski) listesindeki satırlar korunur; aynı belge (satıcı VKN + belge no) Luca'dan alınırsa yerine geçer
+        satir = {(re.sub(r"\D", "", str(r[i_svkn])), str(r[i_no])): r for r in (s.get("satirlar") or []) if len(r) == len(kolonlar) + 2}
+        liste_okunamadi = not s.get("kolonlar")     # E-Mükellef listesi hiç okunamadı (istek hatası): oradaki belgeler bilinmiyor
+
+        def karsi_no(b):
+            """Luca listesinde "alici_*" = karşı taraf. Luca baştaki sıfırı düşürüyor (0730433545 -> 730433545): VKN 10 haneye tamamlanır."""
+            kv = re.sub(r"\D", "", str(b.get("alici_vkn_tckn") or ""))
+            return kv.zfill(10) if kv and len(kv) < 10 else kv
+
+        def belge_anahtari(b):
+            kv = karsi_no(b)
+            return ((kv if yon == "gelen" else firma_vkn), str(b.get("belge_numarasi") or ""))
+        baska = {}                                  # GİB e-Belge dışı kaynaklar (TÜRMOB, İşnet, QR…): buradan indirilemez
+        for b in baska_belgeler:
+            e = satir.get(belge_anahtari(b))
+            if e is not None and e[-1] == "var":    # E-Mükellef'ten zaten alınmış
+                continue
+            kaynak = luca_sorgu.KAYNAK_ADI.get(str(b.get("entegrasyon_tur") or ""), str(b.get("entegrasyon_tur") or "?"))
+            baska[kaynak] = baska.get(kaynak, 0) + 1
+        durum = {"durdu": None, "pes": 0, "pdf_tarayici": None, "pdf_sayfa": None, "varsayilan": None, "pdf_notu": None}
+
+        def xml_al(fa):
+            b, hata = luca.ae_belge_xml(fr, fa["luca"], ekran_tur, sid, donem_id)
+            if b is None:
+                fa["neden"] = "Luca: " + hata
+                return None
+            try:
+                ettn = (dokum.xml_coz(b).get("ettn") or "").strip().lower()
+            except ValueError as e:
+                fa["neden"] = f"Luca yanıtı fatura XML'i değil ({e})"
+                return None
+            beklenen = str(fa["id"]).split("#")[0].strip().lower()
+            if beklenen and ettn != beklenen:       # belge kimliği: XML'deki UUID, Luca listesindeki ETTN ile aynı olmalı
+                fa["neden"] = "XML'deki ETTN, Luca listesindekiyle aynı değil"
+                return None
+            return b
+
+        def pdf_al(fa, xml):
+            """PDF, XML'in kendi görünüm şablonundan (yoksa Luca'nın varsayılan şablonundan) ayrı, profilsiz, ağa kapalı bir
+            Chrome'da üretilir (GİB'in/entegratörün PDF'i değildir)."""
+            if not xml or durum["pdf_notu"]:
+                return None
+            try:
+                if durum["pdf_tarayici"] is None:
+                    t = self.p.chromium.launch(channel="chrome", headless=True)
+                    durum["pdf_tarayici"] = t
+                    c = t.new_context(offline=True)
+                    c.route("**/*", lambda r: r.abort())       # faturadaki şablon dışarıya hiçbir istek yapamaz
+                    durum["pdf_sayfa"] = c.new_page()
+                sayfa = durum["pdf_sayfa"]
+                try:
+                    metin = xml.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    metin = xml.decode("cp1254", "replace")
+                sayfa.set_content(self._BOS_SAYFA)
+                r = sayfa.evaluate(self._XSLT_JS, [metin, None])
+                if r.get("hata") == "xslt_yok":
+                    if durum["varsayilan"] is None:
+                        durum["varsayilan"] = luca.ae_varsayilan_xslt(fr) or ""
+                    if durum["varsayilan"]:
+                        sayfa.set_content(self._BOS_SAYFA)
+                        r = sayfa.evaluate(self._XSLT_JS, [metin, durum["varsayilan"]])
+                if r.get("hata") == "xslt_destegi_yok":
+                    durum["pdf_notu"] = "Bu bilgisayardaki Chrome'da XSLT desteği kapalı; PDF üretilemedi (XML'ler alındı)."
+                    return None
+                if r.get("hata") or not r.get("uzunluk"):
+                    return None
+                bayt = sayfa.pdf(format="A4", print_background=True, margin={"top": "8mm", "bottom": "8mm", "left": "8mm", "right": "8mm"})
+                return bayt if bayt[:4] == b"%PDF" else None
+            except Exception as e:
+                self._olay("ayrinti", f"Luca yedeği PDF üretimi: {type(e).__name__}: {str(e).splitlines()[0][:200]}")
+                return None
+
+        isle = self._fatura_isleyici(f, ay, yil, yon, tur, secim, kayitlar, dosyalar, xml_al=xml_al, pdf_al=pdf_al)
+        alinan = atlanan = 0
+        self._log(f"  {ad}: Luca'da {len(bu)} belge; indiriliyor/kaydediliyor…")
+        try:
+            for n, b in enumerate(bu, 1):
+                no = str(b.get("belge_numarasi") or "")
+                unvan = str(b.get("alici_unvan_ad_soyad") or "").strip(" -")
+                karsi_vkn = karsi_no(b)
+                k = belge_anahtari(b)
+                eski = satir.get(k)
+                if eski is not None and eski[-1] == "var" and (not pdf_iste or eski[-2] == "var"):
+                    atlanan += 1                    # E-Mükellef listesinden zaten tam alınmış
+                    continue
+                if not durum["durdu"] and self._iptal_mi():
+                    durum["durdu"] = "İndirme iptal edildi; kalan belgeler indirilmedi."
+                fa = {"id": str(b.get("ettn") or ""), "belge_no": no, "luca": b,
+                      "ettn": str(b.get("ettn") or "").split("#")[0].strip().lower(),
+                      "liste": {"tarih": str(b.get("belge_tarihi") or "").replace("/", "."), "karsi": unvan, "karsi_vkn": karsi_vkn,
+                                "vergi_haric": None, "odenecek": None,
+                                "satici_vkn": karsi_vkn if yon == "gelen" else firma_vkn, "satici": unvan if yon == "gelen" else "",
+                                "alici_vkn": firma_vkn if yon == "gelen" else karsi_vkn, "alici": "" if yon == "gelen" else unvan}}
+                try:
+                    pdf_s, xml_s = isle(fa, indir=not durum["durdu"])
+                except luca.LucaHatasi as e:        # ekran/firma değişti ya da oturum düştü: kalanlar indirilmez
+                    durum["durdu"] = "Luca: " + str(e).splitlines()[0][:200]
+                    if not self._luca_kontrol():
+                        self.luca = False
+                        self._durum_bildir()
+                    pdf_s, xml_s = isle(fa, indir=False)
+                if eski is not None and xml_s != "var":
+                    kayitlar.pop()                  # Luca'dan alınamadı: E-Mükellef'in satırı ve döküm kaydı (bilinen tutarlar) korunur
+                else:
+                    if eski is not None:            # alındı: aynı belgenin eski döküm kaydı yenisiyle değişir
+                        yeni = kayitlar.pop()
+                        kayitlar[:] = [x for x in kayitlar
+                                       if not (str(x.get("no")) == no and re.sub(r"\D", "", str(x.get("satici_vkn") or "")) == k[0])]
+                        kayitlar.append(yeni)
+                    satir[k] = self._yedek_satiri(kolonlar, kayitlar[-1], pdf_s, xml_s)
+                if xml_s == "var":
+                    alinan += 1
+                    durum["pes"] = 0
+                elif not durum["durdu"]:
+                    durum["pes"] += 1
+                    if durum["pes"] >= 8:           # art arda 8 belge alınamadı: binlerce boş istek yapılmasın
+                        durum["durdu"] = f"Art arda 8 belge Luca'dan alınamadı ({fa.get('neden') or 'neden bilinmiyor'}); kalanlar denenmedi."
+                if n % 50 == 0:
+                    self._log(f"  {ad}: {n}/{len(bu)} belge işlendi ({alinan} XML alındı).")
+        finally:
+            if durum["pdf_tarayici"] is not None:
+                try:
+                    durum["pdf_tarayici"].close()
+                except Exception:
+                    pass
+        for k2, v in isle.sayac.items():
+            sayac[k2] = sayac.get(k2, 0) + v
+        satirlar = sorted(satir.values(), key=lambda r: (sira(r[i_tarih]), str(r[i_no])))
+        sorunlu = sum(1 for r in satirlar if r[-1] in emukellef.SORUN_DURUMU or r[-2] in emukellef.SORUN_DURUMU)
+        son = max((str(r[i_tarih]) for r in satirlar if len(str(r[i_tarih])) == 10), key=sira, default="")
+        notlar = [f"E-Mükellef GİB sorgusu yapılamadı ({gib_mesaj}); belgeler LUCA AKILLI ENTEGRASYON'dan alındı: Luca'da {len(bu)} belge"
+                  + (f", {atlanan} tanesi E-Mükellef listesinde zaten vardı" if atlanan else "")
+                  + (f" (son belge tarihi {son})." if getir["tam"] else
+                     " (yalnız Luca'ya getirilmiş belgeler; Luca'da 'GİB'den Getir' tamamlanmadığı için eksik olabilir"
+                     + (f"; son belge tarihi {son}" if son else "") + ").")]
+        if getir["not"]:
+            notlar.append(getir["not"])
+        if pdf_iste:
+            notlar.append(durum["pdf_notu"] or "PDF'ler XML'in görünüm şablonundan program tarafından üretildi.")
+        if baska:
+            notlar.append("UYARI: Luca'da GİB e-Belge dışı kaynaklı belgeler var, buradan indirilemedi: "
+                          + ", ".join(f"{v} {k2}" for k2, v in sorted(baska.items())) + ".")
+        if durum["durdu"]:
+            notlar.append(durum["durdu"])
+        if liste_okunamadi:
+            notlar.append("UYARI: E-Mükellef'teki fatura listesi okunamadı; yalnız Luca'daki belgeler var.")
+        notlar.append("Oran kırılımı için Fatura Dökümü Excel'ine bakın (XML'den).")
+        return emukellef._fatura_sonucu(ad, s["kapsam"], kolon_tanimi, tutar_kolon, satirlar, sorunlu,
+                                        bool(durum["durdu"] or baska or liste_okunamadi or getir["sorun"]), notlar, "Belge yok.")
 
     # ------------------------------------------------------------ asıl iş
     def _luca_sorgu(self, anahtar, f, ay, yil, dosyalar):
@@ -823,19 +1146,31 @@ class Isci:
                 s["mesaj"] += (f" UYARI: {len(yabanci)} belge başka VKN'li ({', '.join(sorted({str(b['vkn']) for b in yabanci}))}) olduğu için "
                                "KAYDEDİLMEDİ; E-Mükellef'te elle kontrol edin.")
             cikti.beyanname_adlari(belgeler)          # asıl + düzeltme varsa düzeltmelere kalıcı ek
-            for b in belgeler:
-                yol, durum = cikti.beyanname_kaydet(f["ad"], f["klasor"], b, self._log)
-                dosyalar.append(yol)
-                self._log(f"    {yol.name}: {'zaten vardı (aynı)' if durum == 'ayni' else 'kaydedildi'}")
+            kaydedilen = 0
+            try:
+                for b in belgeler:
+                    yol, durum = cikti.beyanname_kaydet(f["ad"], f["klasor"], b, self._log)
+                    dosyalar.append(yol)
+                    kaydedilen += 1
+                    self._log(f"    {yol.name}: {'zaten vardı (aynı)' if durum == 'ayni' else 'kaydedildi'}")
+            finally:
+                if kaydedilen:
+                    takip.tetikle(self._log)          # Beyanname Takip panelinde hemen "verildi" görünsün
             return s
         if anahtar in FATURA_SORGULARI:
             yon, tur = FATURA_SORGULARI[anahtar]
             kayitlar = []
             isle = self._fatura_isleyici(f, ay, yil, yon, tur, secim, kayitlar, dosyalar)
+            bilgi = {}
             if tur == "earsiv":
-                s = emukellef.e_arsiv(ctx, mid, ay, yil, yon=yon, guncelle=secim["earsiv_gib"], iptal=iptal, gunluk=self._log, isle=isle)
+                s = emukellef.e_arsiv(ctx, mid, ay, yil, yon=yon, guncelle=secim["earsiv_gib"], iptal=iptal, gunluk=self._log, isle=isle,
+                                      bilgi=bilgi)
             else:
-                s = emukellef.e_fatura(ctx, mid, ay, yil, yon=yon, guncelle=secim["earsiv_gib"], iptal=iptal, gunluk=self._log, isle=isle)
+                s = emukellef.e_fatura(ctx, mid, ay, yil, yon=yon, guncelle=secim["earsiv_gib"], iptal=iptal, gunluk=self._log, isle=isle,
+                                       bilgi=bilgi)
+            if s["durum"] == "hata" and bilgi.get("gib_yetki_yok") and not iptal():
+                # GİB bu mükellef için müşavire sorgu izni vermiyor (kalıcı): belgeler Luca Akıllı Entegrasyon'dan alınır
+                s = self._luca_fatura_yedegi(anahtar, f, ay, yil, secim, s, kayitlar, dosyalar, bilgi["gib_yetki_yok"], isle.sayac)
             if dokum_kayitlari is not None:
                 onceki = dokum_kayitlari.get(anahtar) or []
                 if s["durum"] != "hata" or len(kayitlar) >= len(onceki):
@@ -942,6 +1277,8 @@ class Isci:
             bilgi["mesaj"] = str(e)
         except Exception as e:
             bilgi["mesaj"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:400]
+        if bilgi["yeni"] or bilgi["ayni"]:
+            takip.tetikle(self._log)                 # Beyanname Takip panelinde hemen "verildi" görünsün
         if bilgi["durum"] == "veri":
             self._log(f"Verilen beyanname ({donem}): {len(bilgi['belgeler'])} belge — {bilgi['yeni']} yeni kaydedildi, {bilgi['ayni']} zaten vardı.")
         elif bilgi["durum"] == "kayit_yok":
