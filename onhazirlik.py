@@ -466,6 +466,67 @@ class LucaFirmaPenceresi(tk.Toplevel):
         self.destroy()
 
 
+class AktarPenceresi(tk.Toplevel):
+    """'GİB'den aktar' onayı: arama aralığı (beyannamenin GİB'e yüklendiği tarih) ve seçenekler. sonuc: işçi görevinin parametreleri ya da None."""
+
+    def __init__(self, ust):
+        super().__init__(ust)
+        self.sonuc = None
+        self.title("GİB'den E-Mükellef'e aktar")
+        self.resizable(False, False)
+        self.configure(bg=R["kart"])
+        ana = tk.Frame(self, bg=R["kart"], padx=18, pady=14)
+        ana.pack(fill="both", expand=True)
+        tk.Label(ana, text="GİB'den E-Mükellef'e aktar", bg=R["kart"], fg=R["lacivert"], font=(YAZI, 13, "bold")).pack(anchor="w")
+        tk.Label(ana, text="E-Mükellef masaüstü programı sürülerek, seçilen tarih aralığında GİB'e verilmiş beyanname ve tahakkuklar "
+                           "E-Mükellef sitesine aktarılır.\n\n"
+                           "• TÜM firmalar kapsanır; yalnız siteye daha önce yüklenmemiş evraklar aktarılır (program kendisi işaretler).\n"
+                           "• Mükelleflere mail / SMS / bildirim GÖNDERİLMEZ.\n"
+                           "• E-Mükellef masaüstü programı açık olmalı; işlem sürerken programa dokunmayın, GİB'e bağlanan başka bir "
+                           "program açmayın. Yükleme başladıktan sonra durdurulamaz.",
+                 bg=R["kart"], fg=R["yazi"], font=(YAZI, 9), wraplength=440, justify="left").pack(anchor="w", pady=(4, 10))
+        g = tk.Frame(ana, bg=R["kart"])
+        g.pack(anchor="w")
+        bugun = date.today()
+        self.bas, self.bit = ttk.Entry(g, width=12), ttk.Entry(g, width=12)
+        self.bas.insert(0, date.fromordinal(bugun.toordinal() - 7).strftime("%d.%m.%Y"))
+        self.bit.insert(0, bugun.strftime("%d.%m.%Y"))
+        tk.Label(g, text="Verilme tarihi", bg=R["kart"], font=(YAZI, 9)).grid(row=0, column=0, sticky="w")
+        self.bas.grid(row=0, column=1, padx=(8, 4))
+        tk.Label(g, text="–", bg=R["kart"], font=(YAZI, 9)).grid(row=0, column=2)
+        self.bit.grid(row=0, column=3, padx=(4, 0))
+        self.sgk, self.liste = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        for metin, v in (("MUHSGK varsa SGK tahakkuk ve hizmet belgelerini de aktar", self.sgk),
+                         ("Yalnız listele (deneme): yüklenecek evrakları göster, yükleme yapma", self.liste)):
+            tk.Checkbutton(ana, text=metin, variable=v, bg=R["kart"], activebackground=R["kart"], font=(YAZI, 9), anchor="w").pack(anchor="w", pady=(6, 0))
+        self.mesaj = tk.Label(ana, text="", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9), wraplength=440, justify="left")
+        self.mesaj.pack(anchor="w", pady=(6, 0))
+        alt = tk.Frame(ana, bg=R["kart"])
+        alt.pack(anchor="w", pady=(8, 0))
+        dugme(alt, "Başlat", self._tamam, ana=True).pack(side="left")
+        dugme(alt, "Vazgeç", self.destroy, kucuk=True).pack(side="left", padx=(8, 0))
+        self.transient(ust)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self._tamam())
+        self.update_idletasks()
+        self.geometry(f"+{ust.winfo_rootx() + max(0, (ust.winfo_width() - self.winfo_reqwidth()) // 2)}"
+                      f"+{ust.winfo_rooty() + max(0, (ust.winfo_height() - self.winfo_reqheight()) // 3)}")
+        self.grab_set()
+
+    def _tamam(self):
+        try:
+            b, s = (datetime.strptime(k.get().strip(), "%d.%m.%Y").date() for k in (self.bas, self.bit))
+        except ValueError:
+            self.mesaj.configure(text="Tarihleri gg.aa.yyyy biçiminde yazın (ör. 25.11.2026).")
+            return
+        if b > s or s > date.today() or (s - b).days > 92:
+            self.mesaj.configure(text="Başlangıç bitişten sonra olamaz, bitiş bugünden ileri olamaz, aralık 3 ayı geçemez.")
+            return
+        self.sonuc = {"tarih_bas": b.strftime("%d.%m.%Y"), "tarih_bit": s.strftime("%d.%m.%Y"), "sgk": self.sgk.get(),
+                      "yalniz_listele": self.liste.get()}
+        self.destroy()
+
+
 class LucaGirisPenceresi(tk.Toplevel):
     """Luca girişi programın içinde: üye (müşteri) no + kullanıcı adı + parola (kayıtlıysa sorulmaz).
     Luca ek kod isterse (iki aşamalı doğrulama kapalıyken güvenlik kodu) Luca ekranının görüntüsü gösterilir; kodu kullanıcı yazar
@@ -1453,6 +1514,13 @@ class Uygulama:
                                  cursor="hand2", font=(YAZI, 9, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
                                  activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], padx=9, justify="center")
         self.b_beyan.pack(fill="both", expand=True, padx=1, pady=1)
+        # GİB'den E-Mükellef'e aktarma (kullanıcı isteği 25.11.2026): E-Mükellef masaüstü programı sürülür (emk_masaustu.py)
+        self.aktar_cerceve = tk.Frame(alt_dugmeler, bg=R["lacivert"])
+        self.aktar_cerceve.pack(side="right", fill="y", padx=(8, 0))
+        self.b_aktar = tk.Button(self.aktar_cerceve, text="GİB'den\naktar", command=self._gib_aktar, relief="flat", bd=0,
+                                 cursor="hand2", font=(YAZI, 9, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
+                                 activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], padx=9, justify="center")
+        self.b_aktar.pack(fill="both", expand=True, padx=1, pady=1)
         self.basla_cerceve = tk.Frame(alt_dugmeler, bg=R["yesil"])
         self.basla_cerceve.pack(side="left", fill="both", expand=True)
         self.b_basla = tk.Button(self.basla_cerceve, text="", command=self._baslat_durdur, relief="flat", bd=0, cursor="hand2",
@@ -1639,6 +1707,8 @@ class Uygulama:
         if not hasattr(self, "b_basla") or not hasattr(self, "secim"):
             return
         self.b_beyan.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
+        if hasattr(self, "b_aktar"):
+            self.b_aktar.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
         if hasattr(self, "b_rapor"):
             self.b_rapor.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
         if self.kosu or self.beyan_kosu:
@@ -2458,6 +2528,37 @@ class Uygulama:
         self.beyan_sira = getattr(self.isci, "sira", None)
         self._dugme_guncelle()                      # Başlat -> Durdur (indirme durdurulabilir)
 
+    def _gib_aktar(self):
+        """GİB'de verilmiş, E-Mükellef sitesine henüz yüklenmemiş beyanname / tahakkukları E-Mükellef masaüstü programıyla aktarır.
+        Firma seçimine bağlı değildir: aralıktaki TÜM firmaların yüklenmemiş evrakları (programın kendi işaretlediği) aktarılır."""
+        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        p = AktarPenceresi(self.kok)
+        self.kok.wait_window(p)
+        if not p.sonuc:
+            return
+        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():     # pencere açıkken başka iş başlamış olabilir
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        self._alt_goster("gunluk")
+        self.isci.gonder("emk_aktar", **p.sonuc)
+        self.beyan_kosu = True                      # ortak tek-görev kilidi (Başlat kilitli, Durdur açık)
+        self.beyan_sira = getattr(self.isci, "sira", None)
+        self._dugme_guncelle()
+
+    def _aktar_sonucu(self, b):
+        baslik_ = "GİB'den E-Mükellef'e aktarma"
+        if b.get("durum") == "yuklendi":
+            messagebox.showinfo(baslik_, f"{b.get('mesaj', '')}\n\n" + "\n".join(f"  • {x[:110]}" for x in (b.get("yuklenen") or [])[:14])
+                                + "\n\nMükelleflere gönderim yapılmadı. Belgeleri klasöre almak için 'Verilen beyannameyi indir'i kullanın.", parent=self.kok)
+        elif b.get("durum") == "liste":
+            messagebox.showinfo(baslik_, f"{b.get('mesaj', '')}\n\n" + "\n".join(f"  • {x[:110]}" for x in (b.get("evraklar") or [])[:18]), parent=self.kok)
+        elif b.get("durum") in ("kayit_yok", "iptal"):
+            messagebox.showinfo(baslik_, b.get("mesaj") or "Yüklenecek evrak yok.", parent=self.kok)
+        else:
+            messagebox.showwarning(baslik_, "Aktarma tamamlanamadı:\n" + (b.get("mesaj") or "bilinmeyen hata"), parent=self.kok)
+
     def _kdvkar_raporu(self):
         """Seçili firma + dönem için KDV ve kâr/zarar durumu raporu: Luca'dan ayın mizanı, dönem başından mizan ve kebir indirilir."""
         if not self._kok_gerekli():
@@ -2525,7 +2626,11 @@ class Uygulama:
         baslik_ = f"Verilen beyanname — {b.get('firma', '')} · {b.get('donem', '')}"
         if b.get("durum") == "veri":
             klasorler = b.get("klasorler") or []
-            metin = (f"{len(b.get('belgeler') or [])} belge indirildi ({b.get('yeni', 0)} yeni kaydedildi, {b.get('ayni', 0)} zaten vardı):\n"
+            if not b.get("yeni"):
+                bas = f"Yeni belge yok; {b.get('ayni', 0)} belgenin hepsi zaten kayıtlıydı (yeniden kaydedilmedi):\n"
+            else:
+                bas = f"{len(b.get('belgeler') or [])} belge bulundu ({b.get('yeni', 0)} yeni kaydedildi, {b.get('ayni', 0)} zaten vardı):\n"
+            metin = (bas
                      + "\n".join(f"  • {x}" for x in (b.get("belgeler") or [])[:12])
                      + "\n\nKlasör:\n" + "\n".join(f"  {k}" for k in klasorler))
             if klasorler and messagebox.askyesno(baslik_, metin + "\n\nKlasör açılsın mı?", parent=self.kok):
@@ -2633,6 +2738,9 @@ class Uygulama:
         elif tur == "beyanname_bitti":              # pencere ayrı turda açılır: olay döngüsü ('calisiyor' vb.) beklemesin
             self._beyan_bitti()
             self.kok.after(60, lambda v=veri: self._beyanname_sonucu(v))
+        elif tur == "aktar_bitti":
+            self._beyan_bitti()
+            self.kok.after(60, lambda v=veri: self._aktar_sonucu(v))
         elif tur == "kdvkar_bitti":
             self._beyan_bitti()
             self._onceki_yenile(gecikme=300)        # inen mizan / kebir dosyaları nota yansısın

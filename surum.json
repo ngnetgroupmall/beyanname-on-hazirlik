@@ -1,12 +1,13 @@
 {
-  "surum": "2026.11.23.1",
+  "surum": "2026.11.25.1",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
     "baslat.pyw": "e4efb3133b7a30d27a8ae144a0ab5b8096c5eb53aa722eb7f5590c16632896f2",
     "birikim.py": "3c4e19845c61d2626a7d9f24c9fea989964fb28e4a880a072066ec617085726d",
-    "cikti.py": "800f9f0797578a9d36b2cf527f1735bc7987efdf47a8248a0113f3897cc3912a",
+    "cikti.py": "c6b44cbb912b9d9e6d1a0d45a0c0beee9c98d26ca4141935b4ae8df345644228",
     "dokum.py": "b8091e533a502c4d88edc9e573756b73d3291a4ee7d2aef6ca2d27bea0a59d80",
+    "emk_masaustu.py": "42ca95d92c0dcc4551c0a9defd7beab83a4611f74e658d6cee22137adf4fcbf8",
     "emukellef.py": "2d5e1a6a68a201d5b821c357e3295cac7b79a48cd2c5105574b5d2587f83b367",
     "giris_kasasi.py": "dd5548bc6b2a7a4ced92f51935a90c00cbe9337cd1161f01a20afeae20bea992",
     "guncelle.py": "71b75433c720904cf041ca7a1a08ee4b72305696ae622aee2736ba4566fcb27c",
@@ -16,9 +17,9 @@
     "luca.py": "f8ceb83bc3cdd132cee529dd0050af5c186dec744b80fddfdf4c39b7ab989a62",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "64040045f5f44b2af78ce22752ce820a7b65f1d9f553acdeea718a008b2ad796",
-    "onhazirlik.py": "506a5837c6a1e6ca82c47e390e466f9f9bea2c909208e20e9265311c3fbebeaa",
+    "onhazirlik.py": "103b1ceefcf248d8b627570580156accd0f366c8f009fa34c278b42f04f1d2d5",
     "ozet.py": "d54a03d5bad8eed8865cf094801f453894187112dfac8c91f7662830037582db",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
-    "tarayici.py": "4f0898c93d90dbb30090bf1466e2e7d1b6ef37c428681fb9a82e12f8492f43e6"
+    "tarayici.py": "a9e89948158dd3156b3358a58dc8f9e08406de168f4d23d400af7de67c9ef87a"
   }
 }

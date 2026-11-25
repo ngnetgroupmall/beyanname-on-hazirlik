@@ -254,6 +254,27 @@ def _pdf_ayni(eski, yeni):
         return False
 
 
+def _tahakkuk_fis_no(bayt):
+    """Tahakkuk fişinin numarası (ör. 20261124011ra0000203); metinde TEK aday varsa. Bulunamaz / kararsızsa None."""
+    try:
+        t = _pdf_metni(bayt)
+    except Exception:
+        return None
+    if not re.search(r"TAHAKKUK\s+F[İI]Ş[İI]", t):
+        return None
+    adaylar = set(re.findall(r"(?<![0-9A-Za-z])\d{10}[0-9A-Za-z]{3}\d{7}(?![0-9A-Za-z])", t))
+    return adaylar.pop() if len(adaylar) == 1 else None
+
+
+def _tahakkuk_ayni(eski, yeni):
+    """Aynı tahakkuk fişi mi? Metin aynıysa ya da fiş numaraları eşitse evet: aynı fiş GİB'den ve E-Mükellef'ten farklı sayfa
+    düzeniyle gelir (metin tutmaz); numara eşitse ikinci kez kaydedilmez (kullanıcı isteği 25.11.2026)."""
+    if _pdf_ayni(eski, yeni):
+        return True
+    a = _tahakkuk_fis_no(eski)
+    return a is not None and a == _tahakkuk_fis_no(yeni)
+
+
 def _belge_bilgisi(b):
     """PDF metninden düzeltme işareti, tarih (dd.mm.yyyy) ve işlem türü; okunamazsa None'lar."""
     try:
@@ -261,7 +282,7 @@ def _belge_bilgisi(b):
     except Exception:
         return {"duzeltme": None, "tarih": None, "islem": None}
     if b["belge"] == "Beyanname":
-        m = re.search(r"Onay Zaman[ıi]\s*:\s*(\d{2})\.(\d{2})\.(\d{4})", t)
+        m = re.search(r"Onay Zaman[ıi]\s*:\s*(\d{2})[./](\d{2})[./](\d{4})", t)
         return {"duzeltme": bool(re.search(r"D[üu]zeltme Nedeni", t)), "tarih": ".".join(m.groups()) if m else None, "islem": None}
     m = re.search(r"(\d{2})/(\d{2})/(\d{4})\s+\d{2}/\d{4}-\d{2}/\d{4}", t)      # Kabul tarihi + vergilendirme dönemi
     i = re.search(r"[İI]şlem T[üu]r[üu]\s*(\d{4})", t)
@@ -307,7 +328,8 @@ def beyanname_kaydet(firma, klasor, belge, gunluk=print):
     vkn = f" (VKN {belge['vkn']})" if belge.get("vkn") else ""
     ek = f" {belge['ek']}" if belge.get("ek") else ""
     ad = temiz_ad(f"{firma} {AYLAR[belge['donem_ay'] - 1]} {belge['donem_yil']} {belge['tur']} {belge['belge']}{ek}{vkn}")
-    return belge_kaydet(hedef, ad, ".pdf", belge["bayt"], ayni_mi=_pdf_ayni, gunluk=gunluk)
+    ayni_mi = _tahakkuk_ayni if belge["belge"] == "Tahakkuk" else _pdf_ayni
+    return belge_kaydet(hedef, ad, ".pdf", belge["bayt"], ayni_mi=ayni_mi, gunluk=gunluk)
 
 
 def verilen_beyannameler(klasor, yil, ay):

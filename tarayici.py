@@ -25,6 +25,7 @@ import ayar
 import birikim
 import cikti
 import dokum
+import emk_masaustu
 import emukellef
 import kdv_kar
 import luca
@@ -182,7 +183,7 @@ class Isci:
                             self.iptal_istendi.clear()
                         self._olay("calisiyor", True)
                     try:
-                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname", "kdv_kar_raporu", "rapor_kaydet"):
+                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname", "kdv_kar_raporu", "rapor_kaydet", "emk_aktar"):
                             self._log("İşlem başlamadan durduruldu.")
                         else:
                             getattr(self, "_g_" + gorev)(**kw)
@@ -1287,6 +1288,18 @@ class Isci:
             self._log(f"HATA: verilen beyanname indirilemedi ({donem}): {bilgi['mesaj']}")
         self._olay("beyanname_bitti", bilgi)
 
+    def _g_emk_aktar(self, tarih_bas, tarih_bit, sgk=True, yalniz_listele=False):
+        """'GİB'den E-Mükellef'e aktar' düğmesi (kullanıcı isteği 25.11.2026): E-Mükellef masaüstü programını sürerek GİB'de verilmiş,
+        siteye henüz yüklenmemiş beyanname / tahakkukları aktarır (emk_masaustu.py). Mükelleflere gönderim YAPILMAZ.
+        Sonuç ("aktar_bitti", {...}) olayıyla arayüze gider."""
+        self._log(f"===== GİB → E-Mükellef beyanname aktarma ({tarih_bas} – {tarih_bit})" + (" — yalnız listeleme" if yalniz_listele else "") + " =====")
+        try:
+            b = emk_masaustu.aktar(self._log, tarih_bas, tarih_bit, sgk=sgk, yalniz_listele=yalniz_listele, iptal=self._iptal_mi)
+        except Exception as e:                      # beklenmeyen hata: ayrıntı (sayfa içeriği olabilir) günlüğe yazılmaz
+            b = {"durum": "hata", "mesaj": f"Beklenmeyen hata ({type(e).__name__}).", "bulunan": 0, "isaretli": 0, "evraklar": [], "yuklenen": []}
+        self._log(("HATA: aktarma tamamlanamadı: " if b["durum"] == "hata" else "Aktarma: ") + b["mesaj"])
+        self._olay("aktar_bitti", b)
+
     # ------------------------------------------------------------ KDV ve kâr/zarar raporu (kullanıcı isteği 20.11.2026)
     def _g_kdv_kar_raporu(self, firma, ay, yil):
         """Luca'dan ayın mizanı, dönem başından mizan ve Defteri Kebir indirilir (dosyalar firma klasörüne kaydedilir), KDV ve
@@ -1534,6 +1547,8 @@ class Isci:
                                                 {"emukellef_id": f.get("emukellef_id"), "luca_sirket_id": f.get("luca_sirket_id")}, self._log)
                 dosyalar[:0] = [y for y in yollar if y not in dosyalar]
                 self._olay("klasor", str(yollar[0].parent))
+                if any(s.get("durum") == "veri" and str(s.get("sorgu", "")).startswith(("Ödeme / Alındı", "KDV 2 Ödeme")) for s in sonuclar):
+                    takip.tetikle(self._log)         # ödeme görünüyorsa Beyanname Takip'te 'ödendi' işaretlensin
             except Exception as e:
                 yazma.append(("Sonuç dosyası yazılamadı", str(e).splitlines()[0]))
                 self._log(f"HATA: sonuç dosyası yazılamadı: {str(e).splitlines()[0]}")
