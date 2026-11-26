@@ -9,6 +9,15 @@ Kullanım (python -X utf8 komut.py ...):
   sorgular                               sorgu anahtarları ve adları
   firmalar [arama]                       klasörü tanımlı firmalar (aramayla: tüm mükellef listesinde ünvan/VKN)
   calistir --firma <kısa ad|klasör|no> --ay 10 --yil 2026 --sorgu <anahtar> [<anahtar> ...] [--gib-yok] [--pdf] [--bekle 3600]
+  toplu --ay 10 --yil 2026 --sorgu <anahtar> [...] [--firma <a> <b> ...] [--gib-yok] [--pdf]
+                                         firmalar sırayla (--firma yoksa programdaki 'sık kullanılan firmalar')
+  indir --ay 10 --yil 2026 [--firma <a> <b> ...]
+                                         verilen KDV1/KDV2/MUHSGK beyanname + tahakkuklarını indirir (Beyanname Takip de güncellenir)
+  aktar --bas 18.11.2026 --bit 25.11.2026 [--yukle] [--indir-yok] [--sgk-yok]
+                                         E-Mükellef masaüstü programıyla GİB'den E-Mükellef'e aktarma. Varsayılan YALNIZ LİSTELER;
+                                         --yukle gerçekten yükler (tüm firmaların yüklenmemiş evrakları) — yalnız kullanıcı onayıyla.
+                                         Yüklemede, yüklendiği doğrulanan beyannameler firma klasörlerine indirilir (--indir-yok: indirme).
+                                         Mükelleflere gönderim (mail/SMS) hiçbir durumda yapılmaz.
   ozetler --firma <...> --ay 10 --yil 2026    dönemin Kontrol Özeti dosyaları (hangisi tam, hangisi kısmi)
   gunluk [satır]                         program günlüğünün son satırları
 
@@ -177,6 +186,24 @@ def _sonuc_yaz(k):
     for etiket, alan in (("Kontrol Özeti", "ozet"), ("Fatura dökümü", "dokum"), ("Dönem klasörü", "donem_klasoru"), ("E-Tebligat klasörü", "tebligat_klasoru")):
         if b.get(alan):
             yaz(f"  {etiket}: {b[alan]}")
+    x = k.get("aktar")
+    if isinstance(x, dict):
+        yaz(f"  Aktarma [{x.get('durum')}]: {x.get('mesaj') or ''} (listelenen {x.get('bulunan', 0)}, yüklenmemiş {x.get('isaretli', 0)})")
+        for s_ in (x.get("evraklar") or [])[:60] if x.get("durum") == "liste" else []:
+            yaz("    • " + str(s_)[:200])
+        for s_ in (x.get("yuklenen") or [])[:60]:
+            yaz("    ✓ " + str(s_)[:220])
+    if k.get("aktar_not"):
+        yaz("  " + str(k["aktar_not"]).replace("\n", "\n  "))
+    t = k.get("toplu")
+    if isinstance(t, dict):
+        yaz(f"  {t.get('baslik')}: {len(t.get('firmalar') or [])} firma")
+        for f in t.get("firmalar") or []:
+            yaz(f"    • {f.get('ad')}: {f.get('durum')}")
+        if t.get("kalan"):
+            yaz("  Yapılmayan: " + ", ".join(t["kalan"]))
+        if t.get("atlanan"):
+            yaz("  Atlanan: " + ", ".join(t["atlanan"]))
 
 
 def k_calistir(a):
@@ -187,13 +214,68 @@ def k_calistir(a):
     if not (1 <= a.ay <= 12 and 2020 <= a.yil <= 2100):
         yaz("Geçersiz dönem.")
         return 2
+    istek = {"firma": int(kayit["emukellef_id"]), "ay": a.ay, "yil": a.yil, "sorgular": list(dict.fromkeys(a.sorgu)),
+             "earsiv_gib": not a.gib_yok, "pdf": bool(a.pdf)}
+    return _istek_birak(istek, f"{kayit.get('ad')} — {AYLAR[a.ay - 1]} {a.yil} — {', '.join(istek['sorgular'])}", a.bekle)
+
+
+def _firma_idleri(degerler):
+    """--firma değerleri -> (E-Mükellef no listesi | 'sik', hata metni)."""
+    if not degerler:
+        return "sik", None
+    idler = []
+    for d in degerler:
+        kayit, hata = firma_bul(d)
+        if hata:
+            return None, hata
+        idler.append(int(kayit["emukellef_id"]))
+    return list(dict.fromkeys(idler)), None
+
+
+def k_toplu(a):
+    if not (1 <= a.ay <= 12 and 2020 <= a.yil <= 2100):
+        yaz("Geçersiz dönem.")
+        return 2
+    idler, hata = _firma_idleri(a.firma)
+    if hata:
+        yaz(hata)
+        return 2
+    istek = {"tur": "toplu", "ay": a.ay, "yil": a.yil, "firmalar": idler, "sorgular": list(dict.fromkeys(a.sorgu)),
+             "earsiv_gib": not a.gib_yok, "pdf": bool(a.pdf)}
+    kapsam = "sık kullanılan firmalar" if idler == "sik" else f"{len(idler)} firma"
+    return _istek_birak(istek, f"toplu sorgu — {kapsam} — {AYLAR[a.ay - 1]} {a.yil} — {', '.join(istek['sorgular'])}", a.bekle)
+
+
+def k_indir(a):
+    if not (1 <= a.ay <= 12 and 2020 <= a.yil <= 2100):
+        yaz("Geçersiz dönem.")
+        return 2
+    idler, hata = _firma_idleri(a.firma)
+    if hata:
+        yaz(hata)
+        return 2
+    istek = {"tur": "indir", "ay": a.ay, "yil": a.yil, "firmalar": idler}
+    kapsam = "sık kullanılan firmalar" if idler == "sik" else f"{len(idler)} firma"
+    return _istek_birak(istek, f"verilen beyanname indirme — {kapsam} — {AYLAR[a.ay - 1]} {a.yil}", a.bekle)
+
+
+def k_aktar(a):
+    for t in (a.bas, a.bit):
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", t):
+            yaz("Tarihleri gg.aa.yyyy biçiminde verin (ör. 25.11.2026).")
+            return 2
+    istek = {"tur": "aktar", "tarih_bas": a.bas, "tarih_bit": a.bit, "yukle": bool(a.yukle), "indir": not a.indir_yok, "sgk": not a.sgk_yok}
+    return _istek_birak(istek, f"GİB'den E-Mükellef'e aktarma — {a.bas} – {a.bit} — " + ("YÜKLEME" if a.yukle else "yalnız listeleme"), a.bekle)
+
+
+def _istek_birak(istek, aciklama, bekle):
+    """İsteği programa bırakır ve sonucu bekler (programın kendi penceresinde, kullanıcı düğmeye basmış gibi çalışır)."""
     d = durum_oku()
     if not d or not d["canli"]:
         yaz(durum_satiri(d))
         return 2
     kid = time.strftime("%H%M%S-") + uuid.uuid4().hex[:6]
-    istek = {"id": kid, "firma": int(kayit["emukellef_id"]), "ay": a.ay, "yil": a.yil, "sorgular": list(dict.fromkeys(a.sorgu)),
-             "earsiv_gib": not a.gib_yok, "pdf": bool(a.pdf)}
+    istek = {"id": kid, **istek}
     KOMUT_KLASORU.mkdir(parents=True, exist_ok=True)
     gecici = ISTEK.with_name(f"istek-{kid}.tmp")
     gecici.write_text(json.dumps(istek, ensure_ascii=False), encoding="utf-8")
@@ -206,9 +288,9 @@ def k_calistir(a):
             pass
         yaz("Bekleyen başka bir istek var; önce onun bitmesini bekleyin (komut.py durum).")
         return 2
-    yaz(f"İstek bırakıldı ({kid}): {kayit.get('ad')} — {AYLAR[a.ay - 1]} {a.yil} — {', '.join(istek['sorgular'])}")
+    yaz(f"İstek bırakıldı ({kid}): {aciklama}")
     bas, alindi, uyarildi = time.time(), False, False
-    while time.time() - bas < a.bekle:
+    while time.time() - bas < bekle:
         time.sleep(2)
         d = durum_oku()
         if not d or not d["canli"]:
@@ -230,7 +312,8 @@ def k_calistir(a):
             _sonuc_yaz(k)
             b = k.get("bitis") or {}
             return 0 if k.get("durum") == "bitti" and not b.get("eksik") and not b.get("durdu") else 1
-    yaz(f"Zaman aşımı ({a.bekle} sn). " + ("İstek alınmamıştı, geri çekildi." if not alindi and _geri_cek(kid) else "Program hâlâ çalışıyor olabilir: komut.py durum"))
+    yaz(f"Zaman aşımı ({bekle} sn). " + ("İstek alınmamıştı, geri çekildi." if not alindi and _geri_cek(kid) else
+                                         "Program hâlâ çalışıyor olabilir: komut.py durum (işi YENİDEN BAŞLATMAYIN)"))
     return 3
 
 
@@ -308,6 +391,25 @@ def main(argv=None):
             x.add_argument("--pdf", action="store_true")
             x.add_argument("--bekle", type=int, default=3600)
         x.set_defaults(f=f)
+    for ad, f in (("toplu", k_toplu), ("indir", k_indir)):
+        x = alt.add_parser(ad)
+        x.add_argument("--ay", type=int, required=True)
+        x.add_argument("--yil", type=int, required=True)
+        x.add_argument("--firma", nargs="+", help="kısa ad / klasör / E-Mükellef no; verilmezse sık kullanılan firmalar")
+        if ad == "toplu":
+            x.add_argument("--sorgu", nargs="+", required=True)
+            x.add_argument("--gib-yok", action="store_true")
+            x.add_argument("--pdf", action="store_true")
+        x.add_argument("--bekle", type=int, default=4 * 3600)
+        x.set_defaults(f=f)
+    x = alt.add_parser("aktar")
+    x.add_argument("--bas", required=True, help="verilme tarihi başlangıcı gg.aa.yyyy")
+    x.add_argument("--bit", required=True, help="verilme tarihi bitişi gg.aa.yyyy")
+    x.add_argument("--yukle", action="store_true", help="gerçekten yükle (varsayılan: yalnız listele) — yalnız kullanıcı onayıyla")
+    x.add_argument("--indir-yok", action="store_true", help="yüklenen beyannameleri firma klasörlerine indirme")
+    x.add_argument("--sgk-yok", action="store_true", help="MUHSGK'nın SGK tahakkuk/hizmet belgelerini aktarma")
+    x.add_argument("--bekle", type=int, default=2 * 3600)
+    x.set_defaults(f=k_aktar)
     x = alt.add_parser("gunluk")
     x.add_argument("satir", nargs="?", type=int, default=25)
     x.set_defaults(f=k_gunluk)

@@ -677,6 +677,23 @@ def ithalat(ctx, mid, ay, yil):
 
 
 # ================================================================ Araçlar
+def _yanit_yapisi(j, derinlik=3):
+    """Tanı için JSON yanıtın DEĞER İÇERMEYEN yapısı: anahtar adları ve düğüm türleri (success yalnız true/false)."""
+    if isinstance(j, dict):
+        if derinlik <= 0:
+            return "{…}"
+        parca = []
+        for a, v in list(j.items())[:12]:
+            if a == "success":
+                parca.append(f"success={v is True}")
+            else:
+                parca.append(f"{str(a)[:20]}:{_yanit_yapisi(v, derinlik - 1)}")
+        return "{" + ", ".join(parca) + "}"
+    if isinstance(j, list):
+        return f"liste[{len(j)}]"
+    return type(j).__name__
+
+
 def _arac(ctx, mid, gecmis):
     sorgu = "Araç Bilgisi (geçmiş)" if gecmis else "Araç Bilgisi (mevcut)"
     kapsam = "Firma adına daha önce kayıtlı (terk edilmiş) araçlar" if gecmis else "Firma adına kayıtlı mevcut araçlar"
@@ -687,13 +704,23 @@ def _arac(ctx, mid, gecmis):
         form["terk_tarihi"] = ""
     try:
         j = _json_tekrarli(ctx, sayfa, yol, form)
-        ic = (j.get("data") or {}).get("sorgula") if isinstance(j.get("data"), dict) else None
+        veri = j.get("data") if isinstance(j.get("data"), dict) else {}
+        ic = veri.get("sorgula")
         araclar = (ic.get("data") or {}).get("araclar") if isinstance(ic, dict) and isinstance(ic.get("data"), dict) else None
+        if araclar is None and "sorgula" not in veri:       # 27.11.2026 düzeni: {data: {mukellef, toplam_arac, araclar: [...]}}
+            araclar = veri.get("araclar")
+            toplam = veri.get("toplam_arac")
+            if j.get("success") and isinstance(araclar, list) and isinstance(toplam, int) and toplam != len(araclar):
+                return _sonuc(sorgu, kapsam, "hata", f"E-Mükellef {toplam} araç bildirdi ama listede {len(araclar)} araç var. "
+                                                     f"[yanıt yapısı: {_yanit_yapisi(j)}]")
+        if isinstance(araclar, list) and araclar and not all(isinstance(a, dict) and str(a.get("plaka") or "").strip() for a in araclar):
+            ilk = next((a for a in araclar if isinstance(a, dict)), {})
+            return _sonuc(sorgu, kapsam, "hata", f"Araç listesi beklenen yapıda değil (plaka alanı yok). [araç alanları: {_yanit_yapisi(ilk, 1)}]")
         if not j.get("success") or not isinstance(araclar, list):
             m = _mesaj(j) or (_html_metin(ic.get("msg")) if isinstance(ic, dict) else "")
             if _kayit_yok_mesaji(m):
                 return _sonuc(sorgu, kapsam, "kayit_yok", m)
-            return _sonuc(sorgu, kapsam, "hata", m or "Beklenmeyen yanıt.")
+            return _sonuc(sorgu, kapsam, "hata", m or f"Beklenmeyen yanıt. [yanıt yapısı: {_yanit_yapisi(j)}]")
         kolonlar = ["Plaka", "Marka", "Tip", "Model yılı", "Cins", "Tescil tarihi", "Tescil durumu", "Terk tarihi", "Terk türü"]
         satirlar = [[a.get("plaka"), a.get("marka"), a.get("tip"), a.get("model"), a.get("cinsAd"),
                      a.get("tescilTarihi"), a.get("tescilDurumu"), a.get("terkTarihi") or "", a.get("terkTuru") or ""] for a in araclar]
@@ -921,16 +948,50 @@ def _earsiv_liste(ctx, mid, ay, yil, yon="gelen"):
     return satirlar
 
 
+# E-fatura listesinin bilinen ham sütun düzenleri (EFATURA_KOLON adı -> ham indeks). EFATURA_KOLON sonraki adımlarda MANTIKSAL
+# indeks olarak kalır; ham eşleme yalnız liste okunurken kullanılır. 27.11.2026'da E-Mükellef 11. sıraya mükellef adı ve belge
+# no'dan sonra (19) onay durumu ("Onaylı") sütunu ekledi. Düzen TAHMİN EDİLMEZ: her satırda belge no + tarih + VKN birlikte tutmalı.
+EFATURA_DUZENLERI = {
+    "27.11.2026 (mükellef adı + onay durumu)": {ad: (i + 1 if i <= 17 else i + 2) for i, ad in EFATURA_KOLON.items()},
+    "yalnız mükellef adı eklenmiş": {ad: i + 1 for i, ad in EFATURA_KOLON.items()},
+    "eski": {ad: i for i, ad in EFATURA_KOLON.items()},
+}
+_EFATURA_BELGE_NO = re.compile(r"^[A-Z0-9]{3}\d{13}$")         # e-fatura ID'si: 3 karakter önek + 13 rakam (yıl + sıra)
+
+
+def _efatura_duzeni(ham):
+    """Ham liste satırlarına uyan düzen (ad -> ham indeks). Bilinen düzenlerden TAM BİRİ tüm satırlarda tutmazsa RuntimeError
+    (sessiz yanlış veri olmasın)."""
+    def uyar(s, d):
+        if not isinstance(s, list) or len(s) <= max(d.values()):
+            return False
+        no = _html_metin(s[d["Belge no"]]).strip().upper()
+        tarih = _html_metin(s[d["Düzenleme tarihi"]]).strip()
+        vkn = [re.sub(r"\D", "", _html_metin(s[d[a]])) for a in ("Alıcı VKN", "Satıcı VKN")]
+        try:
+            datetime.strptime(tarih[:10], "%d.%m.%Y")
+        except ValueError:
+            return False
+        return bool(_EFATURA_BELGE_NO.match(no) and all(len(v) in (10, 11) for v in vkn))
+    uyan = [d for d in EFATURA_DUZENLERI.values() if all(uyar(s, d) for s in ham)]
+    if len(uyan) != 1:
+        uzunluk = sorted({len(s) for s in ham if isinstance(s, list)})
+        bozuk = next((n + 1 for n, s in enumerate(ham) if not any(uyar(s, d) for d in EFATURA_DUZENLERI.values())), None)
+        raise RuntimeError("E-fatura listesinin sütun düzeni tanınamadı (E-Mükellef listeyi değiştirmiş olabilir); faturalar yanlış "
+                           f"okunmasın diye sorgu durduruldu (sütun sayısı {uzunluk}" + (f", uymayan ilk satır {bozuk}" if bozuk else "")
+                           + "). Program güncellemesi gerekiyor.")
+    return uyan[0]
+
+
 def _efatura_liste(ctx, mid, ay, yil, yon):
     yol = f"e-fatura/liste/datatable/{yon}"
     form = [("draw", "1"), ("start", "0"), ("length", "-1"), ("invoice_way", yon), ("ay", f"{ay:02d}"),
             ("yil", str(yil)), ("mukellef_id[]", str(mid))]
-    satirlar = []
-    for s in _tablo_json(_post(ctx, f"e-fatura/liste/{yon}", yol, form), yol):
-        if not isinstance(s, list) or len(s) < 31:
-            raise RuntimeError("E-fatura liste satırı beklenen yapıda değil (kolon sayısı değişmiş).")
-        satirlar.append({"id": _kimlik(s), **{ad: _html_metin(s[i]) for i, ad in EFATURA_KOLON.items()}})
-    return satirlar
+    ham = list(_tablo_json(_post(ctx, f"e-fatura/liste/{yon}", yol, form), yol))
+    if not ham:
+        return []
+    d = _efatura_duzeni(ham)
+    return [{"id": _kimlik(s), **{ad: _html_metin(s[d[ad]]) for ad in EFATURA_KOLON.values()}} for s in ham]
 
 
 def fatura_belgesi(ctx, tur, id_, cesit):
@@ -1518,37 +1579,7 @@ def tahsilat(ctx, mid, ay, yil):
         return _sonuc(sorgu, kapsam, "hata", str(e), kolonlar, satirlar)
 
 
-def gelen_evrak(ctx, mid):
-    bas, bit = _alti_ay()
-    sorgu = "GİB Gelen Evraklar"
-    kapsam = f"{bas:%d.%m.%Y} - {bit:%d.%m.%Y}"
-    sayfa = "emukellef/gib_gelen_evraklar"
-    try:
-        yedek = None
-        try:
-            _modal_giris(ctx, sayfa, mid)
-        except PencereYok as e:
-            # Yedek (19.11.2026): bu ekranın penceresi çalışmıyorsa firmanın GİB oturumunu Bildirimlerim penceresiyle aç, sorguyu yine dene.
-            yedek = e
-            _modal_giris(ctx, "emukellef/gib_bildirimlerim", mid)
-        h = _post(ctx, sayfa, f"{sayfa}/tekli_sorgula", {"id": str(mid), "okunma_durumu": "", "tarih_baslangic": f"{bas:%d.%m.%Y}",
-                                                          "tarih_bitis": f"{bit:%d.%m.%Y}", "gib_gelen_evraklar_sorgula": "Sorgula"}).text()
-        if _panel_sayfasi_mi(h):
-            raise RuntimeError(str(yedek) if yedek else "E-Mükellef sorgu yerine ana sayfayı döndürdü; ekran şu an çalışmıyor olabilir.")
-        s = _html_sonucu(sorgu, kapsam, h, "Gelen evrak yok.")
-        if yedek is not None:
-            # Yedek yolda gelen tablo gerçekten evrak listesi mi (ilgisiz bir tablo 'veri' sayılmasın)
-            evrak_tablosu = s["durum"] == "veri" and re.search(r"evrak|konu", " ".join(map(str, s["kolonlar"])), re.I)
-            if s["durum"] == "hata" or (s["durum"] == "veri" and not evrak_tablosu):
-                return _sonuc(sorgu, kapsam, "hata", f"{yedek} [yedek yol da sonuç vermedi: {s['mesaj'][:120]}]")
-            s["mesaj"] += " (Ekranın kendi penceresi çalışmadı; sonuç yedek yoldan alındı.)"
-        if s["durum"] == "veri":
-            s["mesaj"] += " ACİL: GİB'den gelen evrakları okuyun (ekleri E-Mükellef'ten açılır)."
-        return s
-    except OturumYok:
-        raise
-    except Exception as e:
-        return _sonuc(sorgu, kapsam, "hata", str(e))
+
 
 
 def bildirimler(ctx, mid):

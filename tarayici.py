@@ -62,7 +62,6 @@ SORGULAR = [
     ("arac", "Araç Bilgisi (mevcut)"),
     ("arac_gecmis", "Araç Bilgisi (geçmiş)"),
     ("arac_alim", "Araç Alım/Satım Bilgileri"),
-    ("evrak", "GİB Gelen Evraklar"),
     ("bildirim", "GİB Bildirimlerim"),
     ("karsit", "Gelen Karşıt İnceleme Tutanakları"),
     ("etebligat", "E-Tebligatlar"),
@@ -103,7 +102,7 @@ def hizmet(anahtar):
 BIRIM = {"beyan": "belge", "muhsgk": "belge", "sgk6661": "aylık kayıt", "efatura_gelen": "fatura", "efatura_giden": "fatura", "earsiv": "fatura",
          "earsiv_giden": "fatura", "adina": "kayıt", "iptal_itiraz": "talep", "kdv2": "ödeme", "s109": "ödeme", "alindi": "ödeme",
          "tahsilat": "satır", "borc": "borç satırı", "okc": "bildirim", "pos": "satır", "todeb": "satır", "ithalat": "kayıt",
-         "arac": "araç", "arac_gecmis": "araç", "arac_alim": "kayıt", "evrak": "evrak", "bildirim": "bildirim",
+         "arac": "araç", "arac_gecmis": "araç", "arac_alim": "kayıt", "bildirim": "bildirim",
          "karsit": "tutanak", "etebligat": "tebligat", **luca_sorgu.BIRIM}
 
 
@@ -1111,8 +1110,6 @@ class Isci:
             return emukellef.tahsilat(ctx, mid, ay, yil)
         if anahtar == "borc":
             return emukellef.vergi_borcu(ctx, mid)
-        if anahtar == "evrak":
-            return emukellef.gelen_evrak(ctx, mid)
         if anahtar == "bildirim":
             return emukellef.bildirimler(ctx, mid)
         if anahtar == "karsit":
@@ -1296,7 +1293,8 @@ class Isci:
         try:
             b = emk_masaustu.aktar(self._log, tarih_bas, tarih_bit, sgk=sgk, yalniz_listele=yalniz_listele, iptal=self._iptal_mi)
         except Exception as e:                      # beklenmeyen hata: ayrıntı (sayfa içeriği olabilir) günlüğe yazılmaz
-            b = {"durum": "hata", "mesaj": f"Beklenmeyen hata ({type(e).__name__}).", "bulunan": 0, "isaretli": 0, "evraklar": [], "yuklenen": []}
+            b = {"durum": "hata", "mesaj": f"Beklenmeyen hata ({type(e).__name__}).", "bulunan": 0, "isaretli": 0, "evraklar": [],
+                 "evrak_ayrinti": [], "yuklenen": []}
         self._log(("HATA: aktarma tamamlanamadı: " if b["durum"] == "hata" else "Aktarma: ") + b["mesaj"])
         self._olay("aktar_bitti", b)
 

@@ -32,7 +32,7 @@ SAYFA_ADI = {"Luca UTTS Akaryakıt Giderleri": "Luca UTTS", "KDV 2 Ödeme Sorgul
              "Gelen E-Faturalar": "Gelen E-Fatura", "Giden E-Faturalar": "Giden E-Fatura",
              "E-Arşiv Portal İptal/İtiraz Talepleri": "İptal-İtiraz", "Vergi Borcu": "Vergi Borcu",
              "Ödeme / Alındı (tüm vergiler)": "Ödeme-Alındı", "GİB Tahsilat Bilgileri": "Tahsilat",
-             "GİB Gelen Evraklar": "Gelen Evrak", "GİB Bildirimlerim": "Bildirimler",
+             "GİB Bildirimlerim": "Bildirimler",
              "Gelen Karşıt İnceleme Tutanakları": "Karşıt İnceleme", "E-Tebligatlar": "E-Tebligat",
              "Luca Defteri Kebir": "Luca Kebir (dönem)", "Luca Mizan (seçilen ay)": "Luca Mizan (ay)",
              "Luca Mizan (01.01 - ay sonu)": "Luca Mizan (yıl)", "Luca Akıllı Entegrasyon Alış Belgeleri": "Luca Akıllı Ent. Alış",

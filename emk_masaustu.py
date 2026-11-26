@@ -180,8 +180,8 @@ _TIKLA = "((bas, tam) => {" + _JS + r"""
 })"""
 _ISARETLILER = "(() => {" + _JS + r"""
   return JSON.stringify([...document.querySelectorAll('input[name="secili_evraklar[]"]')].filter(k => k.checked).slice(0, 300).map(k => {
-      const h = [...k.closest('tr').children].map(td => yazi(td));
-      return [h[2] || '', h[4] || '', h[5] || ''].join(' — ');
+      const h = [...k.closest('tr').children].map(td => yazi(td));       // Sıra | Ünvan | TC/Vergi No | Vergi Tür | Dönem
+      return {unvan: h[2] || '', vkn: (h[3] || '').replace(/\D/g, ''), tur: h[4] || '', donem: h[5] || ''};
   }));
 })()"""
 _TARIH = "((bas, bit) => {" + _JS + r"""
@@ -297,7 +297,7 @@ def _liste_bekle(s, sure, ne, onceki=()):
 def aktar(gunluk, tarih_bas, tarih_bit, sgk=True, yalniz_listele=False, iptal=None):
     """GİB'de tarih_bas–tarih_bit (gg.aa.yyyy, yükleme tarihi) aralığında verilmiş ve siteye henüz yüklenmemiş evrakları aktarır.
     Döner: {durum: 'yuklendi' | 'liste' | 'kayit_yok' | 'hata' | 'iptal', mesaj, bulunan, isaretli, evraklar: [...], yuklenen: [...]}."""
-    b = {"durum": "hata", "mesaj": "", "bulunan": 0, "isaretli": 0, "evraklar": [], "yuklenen": []}
+    b = {"durum": "hata", "mesaj": "", "bulunan": 0, "isaretli": 0, "evraklar": [], "evrak_ayrinti": [], "yuklenen": []}
     s = None
     try:
         s = _Surucu(gunluk, iptal)
@@ -337,7 +337,8 @@ def aktar(gunluk, tarih_bas, tarih_bit, sgk=True, yalniz_listele=False, iptal=No
             b.update(durum="kayit_yok", mesaj=_hata_uyarisi(d, onceki)[:300] or "Bu aralıkta evrak bulunamadı.")
         else:
             b["bulunan"], b["isaretli"] = d["satir"], d["isaretli"]
-            b["evraklar"] = s.cdp.js(_ISARETLILER) or []
+            b["evrak_ayrinti"] = [x for x in (s.cdp.js(_ISARETLILER) or []) if isinstance(x, dict)]
+            b["evraklar"] = [" — ".join((x["unvan"], x["tur"], x["donem"])) for x in b["evrak_ayrinti"]]
             gunluk(f"  {b['bulunan']} evrak listelendi; siteye yüklenmemiş (program işaretledi): {b['isaretli']}.")
             for e in b["evraklar"][:40]:
                 gunluk(f"    • {e}")

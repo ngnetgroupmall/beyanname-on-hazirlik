@@ -1,25 +1,26 @@
 {
-  "surum": "2026.11.26.1",
+  "surum": "2026.11.27.1",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
     "baslat.pyw": "e4efb3133b7a30d27a8ae144a0ab5b8096c5eb53aa722eb7f5590c16632896f2",
-    "birikim.py": "3c4e19845c61d2626a7d9f24c9fea989964fb28e4a880a072066ec617085726d",
-    "cikti.py": "c6b44cbb912b9d9e6d1a0d45a0c0beee9c98d26ca4141935b4ae8df345644228",
+    "birikim.py": "3982a515ebd0408b30ce72d203e91ecbcc045b8d2c01a1fb928ff423159dd811",
+    "cikti.py": "2114b0fa7860c8c0cd047fce1846640160e2081f9870769c38c4b6f48aef4350",
     "dokum.py": "b8091e533a502c4d88edc9e573756b73d3291a4ee7d2aef6ca2d27bea0a59d80",
-    "emk_masaustu.py": "42ca95d92c0dcc4551c0a9defd7beab83a4611f74e658d6cee22137adf4fcbf8",
-    "emukellef.py": "2d5e1a6a68a201d5b821c357e3295cac7b79a48cd2c5105574b5d2587f83b367",
+    "emk_masaustu.py": "e1844080ad3ceb46da49c8c34e6f8643c6b0b867f9509763bea1027940d084b0",
+    "emukellef.py": "cd2a519386a8033cfe901df195c19b58070fa72db33e34970864fc595ffb5c56",
     "giris_kasasi.py": "dd5548bc6b2a7a4ced92f51935a90c00cbe9337cd1161f01a20afeae20bea992",
     "guncelle.py": "71b75433c720904cf041ca7a1a08ee4b72305696ae622aee2736ba4566fcb27c",
     "kdv_kar.py": "4a9e8a94b32a2acaf8bc6c18930bc536fb832f400c0fc1e6f10e2048b29719e9",
-    "komut.py": "4a42560582e2d9d3c665c193795f0f77dd31da54f0c9140141e839b2ba2fd996",
+    "komut.py": "bc378bfa79483305a9ff42ad7bf0e5cd6d43f509874428575090a0a123c2ee92",
     "logo_veri.py": "10ca632f2952864a59579714baa4c12b3538446e20f617d4180b8aefc18bcf7e",
     "luca.py": "f8ceb83bc3cdd132cee529dd0050af5c186dec744b80fddfdf4c39b7ab989a62",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "64040045f5f44b2af78ce22752ce820a7b65f1d9f553acdeea718a008b2ad796",
-    "onhazirlik.py": "db40b39e5d67dec3297cee68c66af98ad602768743cc9d193bd8c5f8762f50ab",
-    "ozet.py": "d54a03d5bad8eed8865cf094801f453894187112dfac8c91f7662830037582db",
+    "onhazirlik.py": "31e42b4d190d988709e7f2f7587de223610b283a14d9e15b443c49b76af808a0",
+    "ozet.py": "e429b249b384e3166031b904a0a5ae64bb38d7c401dc51d57a7c66b56cf2021e",
+    "pano.py": "75baab2253f67accedc148d1a8cff86c9af356422c3a38bfe84ffa81934b638c",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
-    "tarayici.py": "a9e89948158dd3156b3358a58dc8f9e08406de168f4d23d400af7de67c9ef87a"
+    "tarayici.py": "5cb17285d9ac920795f6afc71d4d3a23016b1212309c2dc8418b2be4aac9a394"
   }
 }

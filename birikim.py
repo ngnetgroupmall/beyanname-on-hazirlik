@@ -65,6 +65,9 @@ def birlestir(simdiki, oncekiler, sira):
     Dönen kopyalarda ek alanlar: bu_calistirma (bool); seçilenden daha yeni başarısız bir deneme varsa son_deneme {zaman, durum,
     mesaj}. Önceki çalıştırmadan taşınan sonucun kapsamındaki 'bugün' ifadesi sorgu tarihine çevrilir. sira: gösterim sırası."""
     aday = {}                                       # sorgu -> {(zaman, durum): (sonuç, bu çalıştırmadan mı)}
+    if sira:                                        # programdan kaldırılmış sorgunun eski kaydı birikime taşınmaz (ör. GİB Gelen Evraklar)
+        gecerli_ad = set(sira)
+        oncekiler = [s for s in oncekiler if s["sorgu"] in gecerli_ad]
     for s in oncekiler:
         aday.setdefault(s["sorgu"], {})[(s.get("sorgu_zamani"), s["durum"])] = (s, False)
     for s in simdiki:                               # bu çalıştırmanın sonucu, dosyadaki eş kaydının yerine geçer
@@ -124,6 +127,8 @@ def donem_sonuclari(klasor, yil, ay, sira):
     okunabilen sonuç dosyası sayısı)."""
     gecerli = []
     onceki = onceki_sonuclar(klasor, yil, ay, gecerli=gecerli)
+    if sira:                                        # kaldırılmış sorgunun kaydı 'son sorgu zamanı'nı da belirlemez
+        onceki = [s for s in onceki if s["sorgu"] in set(sira)]
     en_son = max((zaman(s) for s in onceki), default=datetime.min)
     return birlestir([], onceki, sira), (en_son.strftime("%d.%m.%Y %H:%M") if en_son != datetime.min else ""), len(gecerli)
 

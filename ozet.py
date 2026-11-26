@@ -350,7 +350,7 @@ def _sgk6661_bolumu(x, ay, yil):
 
 def _diger_bolumu(sonuclar):
     adlar = ("E-Arşiv Mükellef Adına Düzenlenenler", "E-Arşiv Portal İptal/İtiraz Talepleri", "İthalde Ödenen KDV", "Araç Bilgisi (mevcut)",
-             "Araç Bilgisi (geçmiş)", "Araç Alım/Satım Bilgileri", "E-Tebligatlar", "GİB Gelen Evraklar", "GİB Bildirimlerim",
+             "Araç Bilgisi (geçmiş)", "Araç Alım/Satım Bilgileri", "E-Tebligatlar", "GİB Bildirimlerim",
              "Gelen Karşıt İnceleme Tutanakları")
     s = []
     for x in sonuclar:

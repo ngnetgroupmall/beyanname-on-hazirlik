@@ -37,6 +37,7 @@ import emukellef  # noqa: E402
 import giris_kasasi  # noqa: E402
 import guncelle  # noqa: E402
 import luca_kasasi  # noqa: E402
+import pano  # noqa: E402
 from tarayici import FATURA_SORGULARI, LUCA_SORGULARI, SORGULAR, Isci, acil_metni, kisa_sonuc  # noqa: E402
 
 PROGRAM_ADI = "Beyanname Ön Hazırlık"
@@ -65,7 +66,7 @@ GRUPLAR = [
     ("Ödemeler ve borç", ["kdv2", "s109", "alindi", "tahsilat", "borc"]),
     ("Satış kanalları", ["okc", "pos", "todeb"]),
     ("İthalat ve araç", ["ithalat", "arac", "arac_gecmis", "arac_alim"]),
-    ("GİB yazışmaları", ["evrak", "bildirim", "karsit", "etebligat"]),
+    ("GİB yazışmaları", ["bildirim", "karsit", "etebligat"]),
     ("Luca", ["luca_kebir", "luca_mizan_ay", "luca_mizan_yil", "luca_hesap_plani", "luca_ae_alis", "luca_ae_satis", "luca_bordro", "luca_utts"]),
 ]
 SOL_GRUPLAR = (0, 1, 3, 4)                    # dar ekranda iki sütun — sol: 15 sorgu; sağ (ödemeler, GİB yazışmaları, Luca): 15 sorgu
@@ -79,7 +80,7 @@ KISA_AD = {"beyan": "Önceki dönem KDV1 / KDV2", "muhsgk": "MUHSGK", "sgk6661":
            "earsiv": "Gelen e-arşiv", "earsiv_giden": "Giden e-arşiv", "adina": "Adına düzenlenenler", "iptal_itiraz": "E-arşiv iptal / itiraz",
            "kdv2": "KDV2 ödemesi (4017)", "s109": "109 sorumlu sıfatıyla KDV", "alindi": "Ödeme / alındı", "tahsilat": "GİB tahsilat bilgileri",
            "borc": "Vergi borcu", "okc": "ÖKC (Z raporu)", "pos": "POS tahsilatı", "todeb": "TÖDEB", "ithalat": "İthalde ödenen KDV",
-           "arac": "Araçlar (mevcut)", "arac_gecmis": "Araçlar (geçmiş)", "arac_alim": "Araç alım / satım", "evrak": "Gelen evraklar",
+           "arac": "Araçlar (mevcut)", "arac_gecmis": "Araçlar (geçmiş)", "arac_alim": "Araç alım / satım",
            "bildirim": "Bildirimlerim", "karsit": "Karşıt inceleme tutanakları", "etebligat": "E-tebligatlar",
            "luca_kebir": "Defteri Kebir", "luca_mizan_ay": "Mizan (seçilen ay)", "luca_mizan_yil": "Mizan (01.01 – ay sonu)",
            "luca_hesap_plani": "Hesap planı",
@@ -121,6 +122,16 @@ def _onceki_sadele(birlesik):
                        "son_deneme": s.get("son_deneme")}
         if a in FATURA_SORGULARI and s["durum"] == "veri":
             fatura += len(s.get("satirlar") or [])
+        if a == "kdv2" and s["durum"] == "veri":     # vergi dönemine göre 4017 ödemeleri (pano 'Ödendi' için)
+            k = list(s.get("kolonlar") or [])
+            if "Vergi dönemi" in k and "Tutar" in k:
+                i, t, odeme = k.index("Vergi dönemi"), k.index("Tutar"), {}
+                for r in s.get("satirlar") or []:
+                    try:
+                        odeme[str(r[i]).strip()] = odeme.get(str(r[i]).strip(), 0.0) + float(r[t] or 0)
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                sonuclar[a]["odemeler"] = odeme
     return {"sonuclar": sonuclar, "fatura": fatura}
 
 
@@ -294,8 +305,8 @@ def secim_kaydi_oku(ayarlar):
 
 def secim_baslangici(kayit):
     """Sorgu anahtarı -> açılışta işaretli mi. Kayıt varsa o; kayıtta bilinmeyen (sonradan eklenen) sorgu ve kayıt yokken varsayılan:
-    "evrak" (GİB Gelen Evraklar) dışında hepsi işaretli ("evrak" şimdilik düzgün çalışmıyor; kullanıcı kararı 19.11.2026)."""
-    return {a: ((a in kayit["secili"]) if kayit and a in kayit["bilinen"] else a != "evrak") for a, _ in SORGULAR}
+    hepsi işaretli. ('evrak' — GİB Gelen Evraklar — çalışmadığı için programdan kaldırıldı; kullanıcı kararı 27.11.2026.)"""
+    return {a: ((a in kayit["secili"]) if kayit and a in kayit["bilinen"] else True) for a, _ in SORGULAR}
 
 
 def adres_sor(ust, mevcut=None):
@@ -570,8 +581,9 @@ class AktarPenceresi(tk.Toplevel):
         self.bas.grid(row=0, column=1, padx=(8, 4))
         tk.Label(g, text="–", bg=R["kart"], font=(YAZI, 9)).grid(row=0, column=2)
         self.bit.grid(row=0, column=3, padx=(4, 0))
-        self.sgk, self.liste = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        self.sgk, self.liste, self.indir = tk.BooleanVar(value=True), tk.BooleanVar(value=False), tk.BooleanVar(value=True)
         for metin, v in (("MUHSGK varsa SGK tahakkuk ve hizmet belgelerini de aktar", self.sgk),
+                         ("Aktarılan KDV1 / KDV2 / MUHSGK beyannamelerini firma klasörlerine indir ve Beyanname Takip'te işaretle", self.indir),
                          ("Yalnız listele (deneme): yüklenecek evrakları göster, yükleme yapma", self.liste)):
             tk.Checkbutton(ana, text=metin, variable=v, bg=R["kart"], activebackground=R["kart"], font=(YAZI, 9), anchor="w").pack(anchor="w", pady=(6, 0))
         self.mesaj = tk.Label(ana, text="", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9), wraplength=440, justify="left")
@@ -598,7 +610,7 @@ class AktarPenceresi(tk.Toplevel):
             self.mesaj.configure(text="Başlangıç bitişten sonra olamaz, bitiş bugünden ileri olamaz, aralık 3 ayı geçemez.")
             return
         self.sonuc = {"tarih_bas": b.strftime("%d.%m.%Y"), "tarih_bit": s.strftime("%d.%m.%Y"), "sgk": self.sgk.get(),
-                      "yalniz_listele": self.liste.get()}
+                      "yalniz_listele": self.liste.get(), "indir": self.indir.get()}
         self.destroy()
 
 
@@ -1205,6 +1217,8 @@ class Uygulama:
         self.calisiyor = False
         self.kosu = False                           # Başlat/tekrar çalışıyor mu (Durdur düğmesi)
         self.toplu = None                           # sık kullanılan firmaların toplu sorgusu sürüyorsa durumu (bkz. _toplu_baslat)
+        self.aktar_ayar = None                      # süren 'GİB'den aktar' görevinin ayarı (indir zinciri, komut, görev sırası)
+        self.aktar_bekleyen = None                  # aktarma sonucu: görev tamamen kapanınca (calisiyor False) işlenir
         self.kosu_baslangic = None
         self.emk, self.gorunur = None, False        # giriş durumu, tarayıcı penceresi görünür mü
         self.luca = None                            # Luca oturumu (None: bakılmadı, False: giriş yok, True: bağlı)
@@ -1258,7 +1272,7 @@ class Uygulama:
             pass
 
         self._ust_bant()
-        govde = tk.Frame(kok, bg=R["zemin"])
+        self.govde = govde = tk.Frame(kok, bg=R["zemin"])
         govde.pack(fill="both", expand=True, padx=12, pady=12)
         sol = tk.Frame(govde, bg=R["zemin"], width=372)
         sol.pack(side="left", fill="y")
@@ -1267,11 +1281,16 @@ class Uygulama:
         sag.pack(side="left", fill="both", expand=True, padx=(12, 0))
         self._sol_sutun(sol)
         self._sag_sutun(sag)
+        # Firma panosu (kullanıcı kararı 27.11.2026): klasik ekranın durum değişkenlerini paylaşan ikinci görünüm (pano.py)
+        self.pano_g = pano.Pano(kok, self, sys.modules[__name__])
+        g = self.ayarlar.get("gorunum")
+        self.gorunum = g if g in ("pano", "klasik") else "klasik"
 
         self._suz()
         self._donem_guncelle()
         self._durum_goster()
         self._kok_goster()
+        self._gorunum_uygula(self.gorunum, kaydet=False)
         kok.protocol("WM_DELETE_WINDOW", self._kapat)
         kok.after(150, self._olaylari_isle)
         kok.after(1000, self._saniye)
@@ -1398,6 +1417,7 @@ class Uygulama:
         self._suz()
         self._firma_goster()
         self._kok_goster()
+        self._pano_yenile()
         self._yaz(f"Kayıt klasörü: {yol}")
 
     # ------------------------------------------------------------ üst bant
@@ -1413,6 +1433,10 @@ class Uygulama:
         self.adres_yazi.pack(side="left", padx=(10, 0))
         self.adres_yazi.bind("<Button-1>", lambda e: self._adres_degistir())
         self._adres_goster()
+        self.b_gorunum = tk.Button(ust, text="", command=self._gorunum_degistir, relief="flat", bd=0, bg="#e8eef6", fg=R["lacivert"],
+                                   activebackground="white", activeforeground=R["lacivert"], font=(YAZI, 9, "bold"), padx=10, pady=3,
+                                   cursor="hand2")
+        self.b_gorunum.pack(side="left", padx=(16, 0))
         self.b_tarayici = tk.Button(ust, text="Tarayıcıyı göster", command=lambda: self.tarayici_goster(not self.gorunur), relief="flat", bd=0,
                                     bg="#2d4d78", fg="white", activebackground="#3a5f90", activeforeground="white", font=(YAZI, 9),
                                     padx=10, pady=3, cursor="hand2")
@@ -1789,11 +1813,12 @@ class Uygulama:
             self.b_aktar.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
         if hasattr(self, "b_rapor"):
             self.b_rapor.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu) else "normal")
-        if getattr(self, "b_toplu", None) is not None:
-            try:
-                self.b_toplu.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu or self.toplu) else "normal")
-            except tk.TclError:
-                pass
+        for b_ in (getattr(self, "b_toplu", None), getattr(self, "b_toplu_beyan", None)):
+            if b_ is not None:
+                try:
+                    b_.configure(state="disabled" if (self.calisiyor or self.kosu or self.beyan_kosu or self.toplu) else "normal")
+                except tk.TclError:
+                    pass
         if self.kosu or self.beyan_kosu:
             self.basla_cerceve.configure(bg=R["kirmizi"])
             self.b_basla.configure(text="■  Durdur", bg=R["kart"], fg=R["kirmizi"], activebackground=R["kirmizi_z"],
@@ -1803,6 +1828,8 @@ class Uygulama:
             self.basla_cerceve.configure(bg=R["yesil"])
             self.b_basla.configure(text=f"▶  Başlat   ({n} sorgu)", bg=R["yesil"], fg="white", activebackground="#22994a",
                                    activeforeground="white", state="disabled" if self.calisiyor else "normal")
+        if hasattr(self, "pano_g"):
+            self.pano_g.dugmeler()
 
     def _durum_yaz(self, a):
         dy = self.durum_yazilari[a]
@@ -2016,6 +2043,8 @@ class Uygulama:
             self.kok.after(1000, self._saniye)
 
     def _saniye_isle(self):
+        if hasattr(self, "pano_g"):
+            self.pano_g.tik()
         if self.kosu and self.kosu_baslangic:
             s = int(time.time() - self.kosu_baslangic)
             self.il_sure.configure(text=f"geçen süre {s // 60:02d}:{s % 60:02d}")
@@ -2078,6 +2107,8 @@ class Uygulama:
             return reddet("istek dosyası okunamadı")
         if not self._kok_var():                     # komut kullanıcıya soru soramaz
             return reddet("kayıt klasörü seçilmemiş ya da erişilemiyor; kullanıcı programda 'Kayıt klasörü'nü düzeltmeli")
+        if istek.get("tur") not in (None, "calistir"):          # toplu sorgu / toplu beyanname indirme / GİB'den aktar
+            return self._komut_toplu(istek, kid, simdi, reddet)
         f = istek.get("firma")
         adaylar = [x for x in self.tum if (isinstance(f, int) and not isinstance(f, bool) and x["id"] == f)
                    or (isinstance(f, str) and f.strip() and (str(x["id"]) == f.strip() or norm(f) in (norm(x.get("ad") or "-"), norm(x.get("klasor") or "-"))))]
@@ -2266,6 +2297,8 @@ class Uygulama:
                     self.liste.see(n)
         self._sonlari_ciz()
         self._firma_goster()
+        if hasattr(self, "pano_g"):
+            self.pano_g.secim_degisti()
 
     def _secili(self):
         return next((t for t in self.tum if t["id"] == self.secili_id), None)
@@ -2320,13 +2353,15 @@ class Uygulama:
                   "earsiv_giden": bu, "adina": "çapraz kontrol", "iptal_itiraz": f"{A[ay - 1]} – {A[o_ay - 1]}",
                   "kdv2": f"ödeme ayı {A[o_ay - 1]}", "s109": f"{A[ay - 1]} – {A[o_ay - 1]}", "alindi": f"{A[ay - 1]} – {A[o_ay - 1]}",
                   "tahsilat": f"{A[p_ay - 1]} – {A[o_ay - 1]}", "borc": "bugün", "okc": bu, "pos": bu, "todeb": bu, "ithalat": bu,
-                  "arac": "bugün", "arac_gecmis": "bugün", "arac_alim": str(yil), "evrak": "son 6 ay", "bildirim": "son 6 ay",
+                  "arac": "bugün", "arac_gecmis": "bugün", "arac_alim": str(yil), "bildirim": "son 6 ay",
                   "karsit": "son 6 ay", "etebligat": "son 6 ay", "luca_kebir": f"{yil} yılı", "luca_mizan_ay": bu,
                   "luca_mizan_yil": f"Ocak – {A[ay - 1]}", "luca_hesap_plani": f"{yil} yılı", "luca_ae_alis": bu, "luca_ae_satis": bu, "luca_bordro": bu,
                   "luca_utts": f"{A[ay - 1]} + {A[ay % 12]} 1–15"}
         for a, w in self.kapsam_yazi.items():
             w.configure(text=kapsam.get(a, ""))
         self._firma_goster()
+        if hasattr(self, "pano_g"):
+            self.pano_g.donem_degisti()
 
     # ------------------------------------------------------------ günlük ve sonuç paneli
     def _yaz(self, metin):
@@ -2339,11 +2374,38 @@ class Uygulama:
         self.gunluk.insert("end", metin + "\n", etiket or ())
         self.gunluk.see("end")
         self.gunluk.config(state="disabled")
+        if hasattr(self, "pano_g"):
+            self.pano_g.son_satir(zaman, metin)
         try:
             with open(GUNLUK, "a", encoding="utf-8") as g:
                 g.write(f"{datetime.now():%d.%m.%Y %H:%M:%S} {metin}\n")
         except OSError:
             pass
+
+    # ------------------------------------------------------------ görünüm: Firma panosu / Klasik
+    def _gorunum_degistir(self):
+        self._gorunum_uygula("klasik" if self.gorunum == "pano" else "pano")
+
+    def _gorunum_uygula(self, g, kaydet=True):
+        self.gorunum = g
+        self.govde.pack_forget()
+        self.pano_g.pack_forget()
+        if g == "pano":
+            self.pano_g.pack(fill="both", expand=True)
+            self.pano_g.yenile(gecikme=50)
+            self.pano_g.secim_degisti()
+        else:
+            self.govde.pack(fill="both", expand=True, padx=12, pady=12)
+        self.b_gorunum.configure(text="☰  Klasik" if g == "pano" else "▦  Pano")
+        if kaydet:
+            try:
+                self.ayarlar = ayar.ayar_yaz(gorunum=g)
+            except OSError:
+                pass
+
+    def _pano_yenile(self, idler=None):
+        if hasattr(self, "pano_g"):
+            self.pano_g.yenile(idler)
 
     def _alt_goster(self, hangi):
         if hangi == "sonuc" and self.bitis is None:
@@ -2504,7 +2566,7 @@ class Uygulama:
             self.toplu["iptal"] = True
             self.isci.iptal()
             self._yaz("Durdurma istendi; açık istek bitince durur, kalan firmalar sorgulanmaz.")
-            if not (self.calisiyor or self.kosu):
+            if not (self.calisiyor or self.kosu or self.beyan_kosu):
                 self._toplu_bitir()
             return
         if self.kosu or self.beyan_kosu:
@@ -2513,9 +2575,14 @@ class Uygulama:
         else:
             self._baslat()
 
-    def _baslat(self):
+    def _baslat(self, ozel=None):
+        """ozel: ekrandaki işaretler yerine çalışacak seçim (pano 'hatalıları yeniden sorgula'): {secim, firma, donem}. Ekrandaki
+        işaretlere dokunulmaz; Luca girişi araya girer de bu arada firma ya da dönem değişirse iş iptal edilir."""
         if self.toplu:
             self._yaz("Toplu sorgu sürüyor; bitmesini bekleyin ya da Durdur'a basın.")
+            return
+        if ozel is not None and (self.secili_id, self.ay_no, self.yil_no) != (ozel["firma"], *ozel["donem"]):
+            self._yaz("Firma ya da dönem değişti; hatalı sorguların yeniden sorgulanması iptal edildi.")
             return
         if not self._kok_gerekli():                 # kayıt klasörü yoksa önce o (firma listesi değişebilir: seçim sonra okunur)
             return
@@ -2523,7 +2590,8 @@ class Uygulama:
         if not t:
             messagebox.showwarning("Firma seçin", "Önce listeden firma seçin.", parent=self.kok)
             return
-        secim = {k: v.get() for k, v in self.secim.items()}
+        secim = dict(ozel["secim"]) if ozel is not None else {k: v.get() for k, v in self.secim.items()}
+        yeniden = (lambda: self._baslat(ozel)) if ozel is not None else self._baslat
         if not any(secim.values()):          # alt seçenekler tek başına sayılmaz
             messagebox.showwarning("Seçim yok", "En az bir sorgu işaretleyin.", parent=self.kok)
             return
@@ -2542,14 +2610,17 @@ class Uygulama:
                 return
         if luca_secili:
             if self.luca is not True and self.gorunur and self.luca_elle:     # elle giriş bekleniyor: pencere yeniden açılmaz
-                self.luca_elle = self._baslat
+                self.luca_elle = yeniden
                 self._yaz("Açılan tarayıcı penceresinde Luca'ya giriş yapıp 'LUCA MALİ MÜŞAVİR PAKETİ'ni açın; program algılayınca kendiliğinden başlar.")
                 return
             if self.luca is not True:               # önce Luca girişi; başarılı olunca Başlat kendiliğinden sürer
                 self._yaz("Luca sorguları seçili; Luca girişi gerekli.")
-                self.luca_giris_ac(sonra=self._baslat, lucasiz=lambda: (self._hazir_sec([k for k, v in self.secim.items()
-                                                                                         if v.get() and k not in LUCA_SORGULARI]),
-                                                                        self._baslat()))
+                if ozel is not None:
+                    lucasiz = lambda: self._baslat({**ozel, "secim": {k: v and k not in LUCA_SORGULARI for k, v in ozel["secim"].items()}})  # noqa: E731
+                else:
+                    lucasiz = lambda: (self._hazir_sec([k for k, v in self.secim.items() if v.get() and k not in LUCA_SORGULARI]),  # noqa: E731
+                                       self._baslat())
+                self.luca_giris_ac(sonra=yeniden, lucasiz=lucasiz)
                 return
             if not t.get("luca"):
                 t = self._luca_firma_sor(t)
@@ -2600,14 +2671,20 @@ class Uygulama:
         for w in self.sik_satir.winfo_children():
             w.destroy()
         n = sum(1 for i in self._sik_idler() if any(t["id"] == i for t in self.tum))
-        tk.Label(self.sik_satir, text=f"Sık kullanılanlar: {n} firma", bg=R["kart"], fg=R["gri"], font=(YAZI, 8)).pack(side="left")
-        d = tk.Label(self.sik_satir, text="Düzenle", bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 8, "underline"))
-        d.pack(side="left", padx=(8, 0))
-        d.bind("<Button-1>", lambda e: self._sik_duzenle())
-        self.b_toplu = tk.Button(self.sik_satir, text="Toplu sorgula" if not self.toplu else "Toplu sorgu sürüyor…",
-                                 command=self._toplu_baslat, relief="flat", bd=0, cursor="hand2", font=(YAZI, 8, "bold"),
-                                 bg=R["dugme_z"], fg=R["lacivert"], activebackground=R["secili_z"], disabledforeground=R["acik_gri"], padx=8, pady=1)
-        self.b_toplu.pack(side="right")
+        # 'Son kullanılanlar' düğmeleriyle aynı düzen: başlık satırı + üç eşit genişlikte düğme (dar pencerede üst üste binmez)
+        tk.Label(self.sik_satir, text=f"Sık kullanılanlar ({n} firma):", bg=R["kart"], fg=R["gri"], font=(YAZI, 8)).grid(
+            row=0, column=0, columnspan=3, sticky="w")
+
+        def yap(metin, komut, sutun):
+            b = tk.Button(self.sik_satir, text=metin, command=komut, relief="flat", bd=0, cursor="hand2", font=(YAZI, 8, "bold"),
+                          bg=R["dugme_z"], fg=R["lacivert"], activebackground=R["secili_z"], disabledforeground=R["acik_gri"], padx=4, pady=2)
+            b.grid(row=1, column=sutun, sticky="we", padx=(0, 4 if sutun < 2 else 0), pady=(3, 0))
+            return b
+        self.b_sik_duzenle = yap("Listeyi düzenle", self._sik_duzenle, 0)
+        self.b_toplu = yap("Toplu sorgula" if not self.toplu else "Sürüyor…", self._toplu_baslat, 1)
+        self.b_toplu_beyan = yap("Beyanname indir", self._toplu_beyan_baslat, 2)
+        for c in range(3):
+            self.sik_satir.grid_columnconfigure(c, weight=1, uniform="sik")
         self._dugme_guncelle()
 
     def _sik_duzenle(self):
@@ -2627,16 +2704,30 @@ class Uygulama:
             return
         self._yaz(f"Sık kullanılan firmalar kaydedildi: {len(p.sonuc)} firma.")
         self._sik_ciz()
+        self._pano_yenile()
+
+    def _toplu_mesgul(self):
+        return bool(self.calisiyor or self.kosu or self.beyan_kosu or self.toplu or not self._isci_bos())
+
+    def _firma_kaydi(self, mid):
+        return next((x for x in self.tum if x["id"] == mid), None)
+
+    @staticmethod
+    def _toplu_onay_metni(bas, satirlar, atlanan):
+        return (bas + "\n\n" + "\n".join(f"• {s}" for s in satirlar[:30]) + (f"\n… ve {len(satirlar) - 30} firma daha" if len(satirlar) > 30 else "")
+                + ("\n\nAtlanacak:\n" + "\n".join(f"• {a}: {n}" for a, n in atlanan) if atlanan else "")
+                + "\n\nSürerken 'Durdur' kalan firmaları da iptal eder. Başlasın mı?")
 
     def _toplu_baslat(self):
+        """'Toplu sorgula': seçili sorgular + dönem, sık kullanılan firmalar için sırayla (her biri Başlat'a basılmış gibi)."""
         if self.toplu:
             return
         if not self._kok_gerekli():
             return
-        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():
+        if self._toplu_mesgul():
             self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
             return
-        idler = [i for i in self._sik_idler() if any(t["id"] == i for t in self.tum)]
+        idler = [i for i in self._sik_idler() if self._firma_kaydi(i)]
         if not idler:
             messagebox.showinfo("Toplu sorgula", "Önce 'Düzenle' ile sık kullanılan firmaları seçip kaydedin.", parent=self.kok)
             return
@@ -2661,28 +2752,76 @@ class Uygulama:
                 return
         ay, yil = self._donem()
         ayarlar_ = {"earsiv_gib": self.earsiv_gib.get(), "pdf": self.pdf.get()}      # onaydaki değerler sabitlenir
+        plan, atlanan = self._toplu_plan_sorgu(idler, secim, sor=True)
+        if not plan:
+            messagebox.showwarning("Toplu sorgula", "Sorgulanacak firma kalmadı.\n\n" + "\n".join(f"• {a}: {n}" for a, n in atlanan), parent=self.kok)
+            return
+        metin = self._toplu_onay_metni(f"{cikti.AYLAR[ay - 1]} {yil} dönemi için {len(plan)} firma sırayla sorgulanacak:",
+                                       [f"{p_['ad']} ({p_['n']} sorgu)" + (f" — {p_['not']}" if p_["not"] else "") for p_ in plan], atlanan)
+        if not messagebox.askyesno("Toplu sorgula", metin, parent=self.kok):
+            return
+        if self._toplu_mesgul():                    # soru açıkken başka iş başlamış olabilir
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        self._toplu_calistir("sorgu", plan, atlanan, ay, yil, ayarlar_)
+
+    def _toplu_beyan_baslat(self):
+        """'Beyanname indir': seçili dönemin verilen KDV1/KDV2/MUHSGK beyanname + tahakkuklarını sık kullanılan firmalar için indirir."""
+        if self.toplu:
+            return
+        if not self._kok_gerekli():
+            return
+        if self._toplu_mesgul():
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        idler = [i for i in self._sik_idler() if self._firma_kaydi(i)]
+        if not idler:
+            messagebox.showinfo("Beyanname indir", "Önce 'Düzenle' ile sık kullanılan firmaları seçip kaydedin.", parent=self.kok)
+            return
+        if self.emk is not True and not self.gorunur:
+            self._yaz("E-Mükellef girişi gerekli; giriş yaptıktan sonra 'Beyanname indir'e yeniden basın.")
+            self.giris_ac()
+            return
+        ay, yil = self._donem()
+        plan, atlanan = self._toplu_plan_beyan([(i, ay, yil) for i in idler], sor=True)
+        if not plan:
+            messagebox.showwarning("Beyanname indir", "İndirilecek firma kalmadı.\n\n" + "\n".join(f"• {a}: {n}" for a, n in atlanan), parent=self.kok)
+            return
+        metin = self._toplu_onay_metni(f"{cikti.AYLAR[ay - 1]} {yil} döneminin verilen KDV1 / KDV2 / MUHSGK beyanname ve tahakkukları "
+                                       f"{len(plan)} firma için indirilecek (Beyanname Takip paneli de güncellenir):",
+                                       [p_["ad"] for p_ in plan], atlanan)
+        if not messagebox.askyesno("Beyanname indir", metin, parent=self.kok):
+            return
+        if self._toplu_mesgul():
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        self._toplu_calistir("beyan", plan, atlanan, ay, yil)
+
+    def _toplu_plan_sorgu(self, idler, secim, sor):
+        """Toplu sorgu planı -> (plan, atlanan). sor=True: eksik klasör / Luca firması kullanıcıya sorulur (kalıcı kaydedilir);
+        sor=False (komut): pencere açılmaz, klasörü olmayan firma atlanır, Luca firması olmayanda Luca sorguları çıkarılır."""
+        luca_secili = any(secim.get(k) for k in LUCA_SORGULARI)
         onceki_secili = self.secili_id
-        plan, atlanan = [], []
-        luca_uyarildi = False
+        plan, atlanan, uyarildi = [], [], False
         for mid in idler:
-            t = next((x for x in self.tum if x["id"] == mid), None)
+            t = self._firma_kaydi(mid)
             if t is None:
                 atlanan.append((str(mid), "firma listesinde yok"))
                 continue
             ad = t.get("ad") or kisa_ad_oner(t["unvan"])
             if not t.get("klasor"):
-                t = self._klasor_tanimla(t)
+                t = self._klasor_tanimla(t) if sor else None
                 if t is None:
-                    atlanan.append((ad, "klasör tanımlanmadı"))
+                    atlanan.append((ad, "klasör tanımlı değil"))
                     continue
                 ad = t.get("ad") or ad
             s, notu = dict(secim), ""
             if luca_secili and not t.get("luca"):
                 t2 = None
-                if self.luca_firmalar:
+                if sor and self.luca_firmalar:
                     t2 = self._luca_firma_sor(t)
-                elif not luca_uyarildi:
-                    luca_uyarildi = True
+                elif sor and not uyarildi:
+                    uyarildi = True
                     self._yaz("UYARI: Luca firma listesi alınamadı; Luca firması tanımsız firmalarda Luca sorguları çalıştırılmayacak.")
                 if t2 is not None and t2.get("luca"):
                     t = t2
@@ -2696,24 +2835,38 @@ class Uygulama:
                 atlanan.append((ad, "çalışacak sorgu kalmadı (" + (notu or "seçim yok") + ")"))
                 continue
             plan.append({"id": t["id"], "ad": ad, "secim": s, "not": notu, "n": n, "luca": "" if notu else (t.get("luca") or "")})
-        if onceki_secili is not None and any(x["id"] == onceki_secili for x in self.tum):
+        if sor and onceki_secili is not None and self._firma_kaydi(onceki_secili):
             self._firma_sec(onceki_secili)          # sorular seçimi değiştirmiş olabilir: eski seçime dön
-        if not plan:
-            messagebox.showwarning("Toplu sorgula", "Sorgulanacak firma kalmadı.\n\n" + "\n".join(f"• {a}: {n}" for a, n in atlanan), parent=self.kok)
-            return
-        metin = (f"{cikti.AYLAR[ay - 1]} {yil} dönemi için {len(plan)} firma sırayla sorgulanacak:\n\n"
-                 + "\n".join(f"• {p_['ad']} ({p_['n']} sorgu)" + (f" — {p_['not']}" if p_["not"] else "") for p_ in plan[:30])
-                 + (f"\n… ve {len(plan) - 30} firma daha" if len(plan) > 30 else "")
-                 + ("\n\nAtlanacak:\n" + "\n".join(f"• {a}: {n}" for a, n in atlanan) if atlanan else "")
-                 + "\n\nSürerken 'Durdur' kalan firmaları da iptal eder. Başlasın mı?")
-        if not messagebox.askyesno("Toplu sorgula", metin, parent=self.kok):
-            return
-        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():     # soru açıkken başka iş başlamış olabilir
-            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
-            return
-        self.toplu = {"plan": plan, "i": 0, "ay": ay, "yil": yil, "ayar": ayarlar_, "sonuclar": [], "atlanan": atlanan,
-                      "gorev_sira": None, "gorev_bitti": False, "bitis": None, "iptal": False, "durdu": "", "baslangic": time.time()}
-        self._yaz(f"===== Toplu sorgu başladı: {len(plan)} firma · {cikti.AYLAR[ay - 1]} {yil} =====")
+        return plan, atlanan
+
+    def _toplu_plan_beyan(self, hedefler, sor):
+        """Toplu beyanname indirme planı; hedefler: [(E-Mükellef no, ay, yıl)] -> (plan, atlanan)."""
+        onceki_secili = self.secili_id
+        tek_donem = len({(a, y) for _, a, y in hedefler}) <= 1
+        plan, atlanan = [], []
+        for mid, ay, yil in hedefler:
+            t = self._firma_kaydi(mid)
+            if t is None:
+                atlanan.append((str(mid), "firma listesinde yok"))
+                continue
+            ad = t.get("ad") or kisa_ad_oner(t["unvan"])
+            if not t.get("klasor"):
+                t = self._klasor_tanimla(t) if sor else None
+                if t is None:
+                    atlanan.append((ad, "klasör tanımlı değil"))
+                    continue
+                ad = t.get("ad") or ad
+            plan.append({"id": t["id"], "ad": ad if tek_donem else f"{ad} ({cikti.AYLAR[ay - 1]} {yil})", "ay": ay, "yil": yil})
+        if sor and onceki_secili is not None and self._firma_kaydi(onceki_secili):
+            self._firma_sec(onceki_secili)
+        return plan, atlanan
+
+    def _toplu_calistir(self, tur, plan, atlanan, ay=None, yil=None, ayarlar_=None, baslik=None, komut=False, onsoz=""):
+        baslik = baslik or {"sorgu": "Toplu sorgu", "beyan": "Toplu beyanname indirme"}[tur]
+        self.toplu = {"tur": tur, "plan": plan, "i": 0, "ay": ay, "yil": yil, "ayar": ayarlar_ or {}, "sonuclar": [], "atlanan": list(atlanan),
+                      "gorev_sira": None, "gorev_bitti": False, "bitis": None, "iptal": False, "durdu": "", "baslangic": time.time(),
+                      "baslik": baslik, "komut": bool(komut), "onsoz": onsoz}
+        self._yaz(f"===== {baslik} başladı: {len(plan)} firma" + (f" · {cikti.AYLAR[ay - 1]} {yil}" if ay else "") + " =====")
         self._sik_ciz()
         self._toplu_sonraki()
 
@@ -2726,8 +2879,11 @@ class Uygulama:
             self._toplu_bitir()
             return
         p = tp["plan"][tp["i"]]
-        emk_gerek = any(v for k, v in p["secim"].items() if k not in LUCA_SORGULARI)
-        luca_gerek = any(p["secim"].get(k) for k in LUCA_SORGULARI)
+        if tp["tur"] == "sorgu":
+            emk_gerek = any(v for k, v in p["secim"].items() if k not in LUCA_SORGULARI)
+            luca_gerek = any(p["secim"].get(k) for k in LUCA_SORGULARI)
+        else:
+            emk_gerek, luca_gerek = True, False
         if emk_gerek and self.emk is not True and not self.gorunur:
             tp["durdu"] = "E-Mükellef oturumu kapandı"
         elif luca_gerek and self.luca is not True:
@@ -2735,13 +2891,23 @@ class Uygulama:
         if tp["durdu"]:
             self._toplu_bitir()
             return
-        t = next((x for x in self.tum if x["id"] == p["id"]), None)
+        t = self._firma_kaydi(p["id"])
         if t is None or not t.get("klasor"):
             tp["sonuclar"].append((p["ad"], "atlandı: firma kaydı ya da klasörü bulunamadı", None))
             tp["i"] += 1
             self._toplu_sonraki()
             return
         self._firma_sec(t["id"])                    # sonuçlar ekranda bu firmanın kutularında görünsün
+        self._alt_goster("gunluk")
+        self._yaz(f"----- {tp['baslik']} {tp['i'] + 1}/{len(tp['plan'])}: {p['ad']} -----")
+        if tp["tur"] == "beyan":
+            firma = {"ad": t["ad"], "klasor": t["klasor"], "emukellef_id": t["id"], "vkn": t.get("vkn", ""), "unvan": t.get("unvan", "")}
+            self.isci.gonder("verilen_beyanname", firma=firma, ay=p["ay"], yil=p["yil"])
+            self.beyan_kosu = True                  # ortak tek-görev kilidi (Durdur açık)
+            self.beyan_sira = getattr(self.isci, "sira", None)
+            tp["gorev_sira"] = self.beyan_sira
+            self._dugme_guncelle()
+            return
         ay, yil = tp["ay"], tp["yil"]
         firma = {"ad": t["ad"], "klasor": t["klasor"], "emukellef_id": t["id"], "vkn": t.get("vkn", ""), "unvan": t.get("unvan", ""),
                  "luca_sirket_id": t.get("luca") or p.get("luca") or ""}
@@ -2751,8 +2917,6 @@ class Uygulama:
         self.son_kosu_firma = t["id"]
         self._durumlari_sifirla()
         self.bitis = None
-        self._alt_goster("gunluk")
-        self._yaz(f"----- Toplu sorgu {tp['i'] + 1}/{len(tp['plan'])}: {p['ad']} -----")
         self._kosu_basla()
         self.isci.gonder("baslat", secim=secim)
         tp["gorev_sira"] = getattr(self.isci, "sira", None)
@@ -2762,7 +2926,16 @@ class Uygulama:
         if tp is None or tp["i"] >= len(tp["plan"]):
             return
         p, b = tp["plan"][tp["i"]], tp["bitis"]
-        if b:
+        if not b:
+            durum = "durduruldu" if tp["iptal"] else "sonuç üretmeden bitti (günlüğe bakın)"
+        elif tp["tur"] == "beyan":
+            if b.get("durum") == "veri":
+                durum = f"{b.get('yeni', 0)} yeni kaydedildi, {b.get('ayni', 0)} zaten vardı"
+            elif b.get("durum") == "kayit_yok":
+                durum = "verilmiş beyanname yok"
+            else:
+                durum = "HATA: " + str(b.get("mesaj") or "bilinmeyen hata")[:150]
+        else:
             s = b.get("sayim") or {}
             durum = f"{s.get('veri', 0)} veri, {s.get('kayit_yok', 0)} kayıt yok"
             if s.get("hata"):
@@ -2771,8 +2944,6 @@ class Uygulama:
                 durum += f", {s['calistirilmadi']} çalıştırılmadı"
             if b.get("acil"):
                 durum += f", ACİL {len(b['acil'])}"
-        else:
-            durum = "durduruldu" if tp["iptal"] else "sonuç üretmeden bitti (günlüğe bakın)"
         tp["sonuclar"].append((p["ad"], durum, b))
         tp["i"] += 1
         tp["gorev_bitti"] = True
@@ -2783,23 +2954,115 @@ class Uygulama:
             return
         self._sik_ciz()
         self._dugme_guncelle()
+        self._pano_yenile()
+        if tp["tur"] == "beyan":
+            self._onceki_yenile(gecikme=300)        # inen beyannameler dönem notuna yansısın
+
+        def sorunlu_mu(b):
+            if b is None:
+                return True
+            return b.get("durum") == "hata" if tp["tur"] == "beyan" else bool(b.get("eksik") or b.get("acil"))
         kalan = tp["plan"][tp["i"]:]
+        neden = (tp["durdu"] or ("durduruldu" if tp["iptal"] else "çalıştırılmadı")) if kalan else ""
         s = int(time.time() - tp["baslangic"])
         satirlar = [f"• {ad}: {durum}" for ad, durum, _ in tp["sonuclar"]]
         if kalan:
-            neden = tp["durdu"] or ("durduruldu" if tp["iptal"] else "çalıştırılmadı")
-            satirlar.append(f"\nSorgulanmayan {len(kalan)} firma ({neden}): " + ", ".join(p_["ad"] for p_ in kalan))
+            satirlar.append(f"\nYapılmayan {len(kalan)} firma ({neden}): " + ", ".join(p_["ad"] for p_ in kalan))
         if tp["atlanan"]:
             satirlar.append("\nAtlanan: " + ", ".join(f"{a} ({n})" for a, n in tp["atlanan"]))
-        sorunlu = kalan or any(b is None or (b.get("eksik") or b.get("acil")) for _, _, b in tp["sonuclar"])
-        baslik_ = f"Toplu sorgu — {cikti.AYLAR[tp['ay'] - 1]} {tp['yil']} ({len(tp['sonuclar'])} firma, {s // 60:02d}:{s % 60:02d})"
+        eksik = sum(1 for _, _, b in tp["sonuclar"] if sorunlu_mu(b)) + len(kalan)
+        donem = f" — {cikti.AYLAR[tp['ay'] - 1]} {tp['yil']}" if tp["ay"] else ""
+        baslik_ = f"{tp['baslik']}{donem} ({len(tp['sonuclar'])} firma, {s // 60:02d}:{s % 60:02d})"
         self._yaz(f"===== {baslik_} =====")
         for x in satirlar:
             self._yaz(x.strip())
-        metin = "\n".join(satirlar) + "\n\nAyrıntı her firmanın kendi Kontrol Özeti'nde ve günlükte."
+        if tp["komut"]:
+            self._komut_kapat("bitti", toplu={"baslik": tp["baslik"], "firmalar": [{"ad": a, "durum": d} for a, d, _ in tp["sonuclar"]],
+                                              "kalan": [p_["ad"] for p_ in kalan], "atlanan": [f"{a} ({n})" for a, n in tp["atlanan"]]},
+                              bitis={"durdu": neden or None, "eksik": eksik})
+            return
+        metin = ((tp["onsoz"].strip() + "\n\n") if tp["onsoz"] else "") + "\n".join(satirlar)
+        metin += "\n\nAyrıntı günlükte" + (" ve her firmanın kendi Kontrol Özeti'nde." if tp["tur"] == "sorgu" else ".")
         if tp["durdu"]:
-            metin += f"\n\n{tp['durdu']}: giriş yapıp 'Toplu sorgula'ya yeniden basın (sorgulanmış firmaların sonuçları korunur)."
-        self.kok.after(60, lambda: (messagebox.showwarning if sorunlu else messagebox.showinfo)(baslik_, metin, parent=self.kok))
+            metin += f"\n\n{tp['durdu']}: giriş yapıp yeniden deneyin (tamamlanan firmaların sonuçları korunur)."
+        self.kok.after(60, lambda: (messagebox.showwarning if eksik else messagebox.showinfo)(baslik_, metin, parent=self.kok))
+
+    # ---- komut kanalından toplu işler (komut.py toplu / indir / aktar): pencere açılmaz, sonuç durum.json'a yazılır
+    def _komut_kapat(self, durum, neden=None, **ek):
+        k = self.komut or {}
+        k.update({"durum": durum, "bitis_saati": datetime.now().strftime("%d.%m.%Y %H:%M:%S")}, **ek)
+        if neden:
+            k["neden"] = neden
+        self.komut = k
+        self.komut_sira = None
+        self._komut_gecmise_yaz()
+        self._yaz(f"Komut tamamlandı ({k.get('id')}): {durum}" + (f" — {neden}" if neden else ""))
+        self._durum_dosyasi_yaz(zorla=True)
+
+    def _komut_toplu(self, istek, kid, simdi, reddet):
+        tur = istek.get("tur")
+        if tur in ("toplu", "indir"):
+            ay, yil = istek.get("ay"), istek.get("yil")
+            if not (isinstance(ay, int) and isinstance(yil, int) and 1 <= ay <= 12 and 2020 <= yil <= 2100):
+                return reddet("dönem geçersiz")
+            f = istek.get("firmalar")
+            if f in (None, "sik"):
+                idler, kaynak = self._sik_idler(), "sık kullanılan firmalar"
+            elif isinstance(f, list) and f and all(isinstance(i, int) and not isinstance(i, bool) for i in f):
+                idler, kaynak = list(dict.fromkeys(f)), "verilen firmalar"
+            else:
+                return reddet("firma listesi geçersiz")
+            if not idler:
+                return reddet("sık kullanılan firma listesi boş (kullanıcı programda 'Sık kullanılanlar > Düzenle' ile kaydeder)")
+            donem = f"{cikti.AYLAR[ay - 1]} {yil}"
+            if tur == "toplu":
+                gecerli = [k for k, _ in SORGULAR]
+                sorgular = istek.get("sorgular")
+                if not isinstance(sorgular, list) or not sorgular or any(k not in gecerli for k in sorgular):
+                    return reddet("sorgu listesi boş ya da bilinmeyen sorgu içeriyor (komut.py sorgular)")
+                if any(k not in LUCA_SORGULARI for k in sorgular) and self.emk is not True:
+                    return reddet("E-Mükellef girişi yok; girişi kullanıcı programda yapmalı")
+                if any(k in LUCA_SORGULARI for k in sorgular) and self.luca is not True:
+                    return reddet("Luca girişi yok; kullanıcı programda 'Luca girişi' ile tarayıcıdan giriş yapmalı (ya da Luca sorgularını çıkarın)")
+                plan, atlanan = self._toplu_plan_sorgu(idler, {k: k in sorgular for k in self.secim}, sor=False)
+                if not plan:
+                    return reddet("sorgulanacak firma kalmadı: " + "; ".join(f"{a} ({n})" for a, n in atlanan)[:300])
+                self.komut = {"id": kid, "durum": "calisiyor", "tur": "toplu", "firma": f"{len(plan)} firma ({kaynak})", "donem": donem,
+                              "istenen": [k for k in gecerli if k in sorgular], "baslangic": simdi}
+                self._yaz(f"Komut alındı (komut.py): toplu sorgu — {len(plan)} firma — {donem} — {', '.join(self.komut['istenen'])}")
+                self._toplu_calistir("sorgu", plan, atlanan, ay, yil, {"earsiv_gib": istek.get("earsiv_gib", True) is not False,
+                                                                       "pdf": istek.get("pdf") is True}, komut=True)
+            else:
+                if self.emk is not True:
+                    return reddet("E-Mükellef girişi yok; girişi kullanıcı programda yapmalı")
+                plan, atlanan = self._toplu_plan_beyan([(i, ay, yil) for i in idler], sor=False)
+                if not plan:
+                    return reddet("indirilecek firma kalmadı: " + "; ".join(f"{a} ({n})" for a, n in atlanan)[:300])
+                self.komut = {"id": kid, "durum": "calisiyor", "tur": "indir", "firma": f"{len(plan)} firma ({kaynak})", "donem": donem,
+                              "baslangic": simdi}
+                self._yaz(f"Komut alındı (komut.py): toplu beyanname indirme — {len(plan)} firma — {donem}")
+                self._toplu_calistir("beyan", plan, atlanan, ay, yil, komut=True)
+        elif tur == "aktar":
+            try:
+                bas, bit = (datetime.strptime(str(istek.get(a) or ""), "%d.%m.%Y").date() for a in ("tarih_bas", "tarih_bit"))
+            except ValueError:
+                return reddet("tarih geçersiz (gg.aa.yyyy)")
+            if bas > bit or bit > date.today() or (bit - bas).days > 92:
+                return reddet("tarih aralığı geçersiz (en çok 3 ay; bitiş bugünden ileri olamaz)")
+            yukle = istek.get("yukle") is True                  # varsayılan: yalnız listeleme (yükleme açıkça istenmeli)
+            indir = yukle and istek.get("indir", True) is not False
+            if indir and self.emk is not True:
+                return reddet("E-Mükellef girişi yok: aktarılan beyannameler indirilemez (kullanıcı giriş yapmalı ya da --indir-yok ile verin)")
+            aralik = f"{bas:%d.%m.%Y} – {bit:%d.%m.%Y}"
+            self.komut = {"id": kid, "durum": "calisiyor", "tur": "aktar", "firma": "tüm firmalar (E-Mükellef masaüstü programı)",
+                          "donem": aralik, "yukle": yukle, "baslangic": simdi}
+            self._yaz(f"Komut alındı (komut.py): GİB'den E-Mükellef'e aktarma — {aralik} — " + ("YÜKLEME" if yukle else "yalnız listeleme")
+                      + (" + aktarılanları indir" if indir else ""))
+            self._aktar_gonder({"tarih_bas": f"{bas:%d.%m.%Y}", "tarih_bit": f"{bit:%d.%m.%Y}", "sgk": istek.get("sgk", True) is not False,
+                                "yalniz_listele": not yukle}, indir=indir, komut=True)
+        else:
+            return reddet(f"bilinmeyen komut türü: {str(tur)[:30]}")
+        self._durum_dosyasi_yaz(zorla=True)
 
     def _klasor_tanimla(self, t):
         """Firma klasörü tanımlı değilse sorar ve kaydeder; güncel firma kaydını (vazgeçilirse None) döner."""
@@ -2850,28 +3113,106 @@ class Uygulama:
 
     def _gib_aktar(self):
         """GİB'de verilmiş, E-Mükellef sitesine henüz yüklenmemiş beyanname / tahakkukları E-Mükellef masaüstü programıyla aktarır.
-        Firma seçimine bağlı değildir: aralıktaki TÜM firmaların yüklenmemiş evrakları (programın kendi işaretlediği) aktarılır."""
-        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():
+        Firma seçimine bağlı değildir: aralıktaki TÜM firmaların yüklenmemiş evrakları (programın kendi işaretlediği) aktarılır.
+        İsteğe bağlı (varsayılan açık): yüklendiği doğrulanan KDV1/KDV2/MUHSGK beyannameleri sonra firma klasörlerine indirilir
+        ve Beyanname Takip paneli güncellenir (kullanıcı isteği 26.11.2026)."""
+        if self._toplu_mesgul():
             self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
             return
         p = AktarPenceresi(self.kok)
         self.kok.wait_window(p)
         if not p.sonuc:
             return
-        if self.calisiyor or self.kosu or self.beyan_kosu or not self._isci_bos():     # pencere açıkken başka iş başlamış olabilir
+        if self._toplu_mesgul():                    # pencere açıkken başka iş başlamış olabilir
             self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
             return
+        prm = dict(p.sonuc)
+        indir = prm.pop("indir", False) and not prm.get("yalniz_listele")
+        self._aktar_gonder(prm, indir=indir, komut=False)
+
+    def _aktar_gonder(self, parametre, indir, komut):
         self._alt_goster("gunluk")
-        self.isci.gonder("emk_aktar", **p.sonuc)
+        self.isci.gonder("emk_aktar", **parametre)
         self.beyan_kosu = True                      # ortak tek-görev kilidi (Başlat kilitli, Durdur açık)
         self.beyan_sira = getattr(self.isci, "sira", None)
+        self.aktar_ayar = {"indir": bool(indir), "komut": bool(komut), "sira": self.beyan_sira}
+        self.aktar_bekleyen = None
         self._dugme_guncelle()
 
-    def _aktar_sonucu(self, b):
+    def _aktar_hedefleri(self, b):
+        """Yüklendiği programın ekranında doğrulanan KDV1/KDV2/MUHSGK evrakları -> ([(E-Mükellef no, ay, yıl)], [(evrak, neden)]).
+        Firma yalnız tekil VKN/TCKN eşleşmesiyle bulunur (ünvanla tahmin edilmez); dönemin son ayı alınır."""
+        vkn_firma = {}
+        for t in self.tum:
+            v = re.sub(r"\D", "", str(t.get("vkn") or ""))
+            if len(v) in (10, 11):
+                vkn_firma.setdefault(v, []).append(t)
+        yuklenen = []
+        for m in b.get("yuklenen") or []:
+            if "Beyanname Bilgisayara İndi ve Web Sitesine Yüklendi" in m:
+                p_ = [x.strip() for x in m.split("—")]
+                if len(p_) >= 3:
+                    yuklenen.append((norm(p_[0]), p_[1], p_[2]))
+        hedef, atlanan = [], []
+        for e in b.get("evrak_ayrinti") or []:
+            tur = str(e.get("tur") or "").strip()
+            if not re.fullmatch(r"KDV ?[12]|MUHSGK", tur.upper()):
+                continue
+            donem = str(e.get("donem") or "").strip()
+            etiket = f"{str(e.get('unvan') or '')[:32]} {tur} {donem}"
+            u = norm(str(e.get("unvan") or "").rstrip("…").rstrip(".").strip())
+            if not (u and donem and any(t_ == tur and d_.startswith(donem) and un.startswith(u) for un, t_, d_ in yuklenen)):
+                atlanan.append((etiket, "yüklendiği doğrulanamadı"))
+                continue
+            m = re.search(r"(\d{1,2})/(\d{4})$", donem)
+            if not m or not 1 <= int(m.group(1)) <= 12:
+                atlanan.append((etiket, "dönem okunamadı"))
+                continue
+            f = vkn_firma.get(re.sub(r"\D", "", str(e.get("vkn") or "")), [])
+            if len(f) != 1:
+                atlanan.append((etiket, "programın firma listesinde bulunamadı" if not f else "aynı VKN'li birden çok firma"))
+                continue
+            k = (f[0]["id"], int(m.group(1)), int(m.group(2)))
+            if k not in hedef:
+                hedef.append(k)
+        return hedef, atlanan
+
+    def _aktar_sonucu(self, b, a=None):
+        """Aktarma görevi tamamen kapandıktan sonra çağrılır: sonucu gösterir ya da indirme zincirini başlatır."""
+        a = a or {}
+        komut = bool(a.get("komut") and self.komut and self.komut.get("durum") == "calisiyor")
+        if komut:
+            self.komut["aktar"] = {k: b.get(k) for k in ("durum", "mesaj", "bulunan", "isaretli", "evraklar", "yuklenen")}
+        ek = ""
+        if b.get("durum") == "yuklendi" and a.get("indir"):
+            hedefler, atlanan = self._aktar_hedefleri(b)
+            if hedefler and (self.emk is True or self.gorunur):
+                plan, atl2 = self._toplu_plan_beyan(hedefler, sor=not komut)
+                atlanan += atl2
+                if plan:
+                    self._toplu_calistir("beyan", plan, atlanan, baslik="Aktarılan beyannamelerin indirilmesi", komut=komut,
+                                         onsoz=f"Aktarma: {b.get('mesaj', '')}")
+                    return
+                ek = "İndirilecek firma kalmadı."
+            elif hedefler:
+                ek = "E-Mükellef girişi olmadığı için aktarılan beyannameler indirilemedi; giriş yapıp 'Beyanname indir'i kullanın."
+            else:
+                ek = "Firma klasörüne indirilecek, yüklendiği doğrulanmış KDV1 / KDV2 / MUHSGK beyannamesi yok."
+            if atlanan:
+                ek += "\nİndirilmeyen: " + "; ".join(f"{x} ({n})" for x, n in atlanan[:15])
+        if komut:
+            hata = b.get("durum") in ("hata", "iptal")
+            self._komut_kapat("hata" if hata else "bitti", (b.get("mesaj") or "")[:300] if hata else None, aktar_not=ek,
+                              bitis={"eksik": 1 if hata else 0, "durdu": None})
+            return
+        self.kok.after(60, lambda: self._aktar_penceresi(b, ek))
+
+    def _aktar_penceresi(self, b, ek=""):
         baslik_ = "GİB'den E-Mükellef'e aktarma"
         if b.get("durum") == "yuklendi":
             messagebox.showinfo(baslik_, f"{b.get('mesaj', '')}\n\n" + "\n".join(f"  • {x[:110]}" for x in (b.get("yuklenen") or [])[:14])
-                                + "\n\nMükelleflere gönderim yapılmadı. Belgeleri klasöre almak için 'Verilen beyannameyi indir'i kullanın.", parent=self.kok)
+                                + "\n\nMükelleflere gönderim yapılmadı. "
+                                + (ek or "Belgeleri klasöre almak için 'Verilen beyannameyi indir'i kullanın."), parent=self.kok)
         elif b.get("durum") == "liste":
             messagebox.showinfo(baslik_, f"{b.get('mesaj', '')}\n\n" + "\n".join(f"  • {x[:110]}" for x in (b.get("evraklar") or [])[:18]), parent=self.kok)
         elif b.get("durum") in ("kayit_yok", "iptal"):
@@ -3040,6 +3381,7 @@ class Uygulama:
             self._suz()
             self._firma_goster()
             self._durum_goster()
+            self._pano_yenile()
         elif tur == "calisiyor":
             self.calisiyor = bool(veri)
             if not self.calisiyor and self.kosu:
@@ -3052,21 +3394,36 @@ class Uygulama:
                 self._luca_elle_surdur()            # işçi meşgulken algılanan elle Luca girişi: bekleyen işlem şimdi sürer
             if not self.calisiyor and self.toplu and self.toplu.get("gorev_bitti"):
                 self._toplu_sonraki()               # toplu sorgu: sıradaki firma (aynı turda; arada boşta kalınmaz)
+            if not self.calisiyor and self.aktar_bekleyen:
+                v, a = self.aktar_bekleyen          # aktarma görevi tamamen kapandı: sonuç / indirme zinciri şimdi
+                self.aktar_bekleyen = None
+                self._aktar_sonucu(v, a)
+        elif tur == "pano_veri":
+            self.pano_g.veri_geldi(veri)
         elif tur == "bitti":
             self._sonuc_kur(veri)
+            self._pano_yenile([self.kosu_hedef[0]] if self.kosu_hedef else None)
             if self.toplu and self.toplu.get("gorev_sira") is not None and not self.toplu.get("gorev_bitti"):
                 self.toplu["bitis"] = veri          # toplu sorgudaki o anki firmanın sonucu
-            if self.komut and self.komut.get("durum") == "calisiyor":
+            if self.komut and self.komut.get("durum") == "calisiyor" and not self.toplu:     # toplu komut kendi sonunda kapanır
                 self._komut_bitir("bitti", bitis=veri)
             self._onceki_yenile(gecikme=400)        # yeni sonuç dosyaları nota ve kutulara yansısın
         elif tur == "beyanname_bitti":              # pencere ayrı turda açılır: olay döngüsü ('calisiyor' vb.) beklemesin
+            tp = self.toplu
+            self._pano_yenile([tp["plan"][tp["i"]]["id"]] if (tp and tp["i"] < len(tp["plan"])) else
+                              ([self.secili_id] if self.secili_id is not None else None))
             self._beyan_bitti()
-            self.kok.after(60, lambda v=veri: self._beyanname_sonucu(v))
+            if (self.toplu and self.toplu["tur"] == "beyan" and self.toplu.get("gorev_sira") is not None
+                    and not self.toplu.get("gorev_bitti")):
+                self.toplu["bitis"] = veri          # toplu indirmede firma başına pencere açılmaz; özet sonda
+            else:
+                self.kok.after(60, lambda v=veri: self._beyanname_sonucu(v))
         elif tur == "aktar_bitti":
             self._beyan_bitti()
-            self.kok.after(60, lambda v=veri: self._aktar_sonucu(v))
+            self.aktar_bekleyen, self.aktar_ayar = (veri, self.aktar_ayar or {}), None
         elif tur == "kdvkar_bitti":
             self._beyan_bitti()
+            self._pano_yenile([self.secili_id] if self.secili_id is not None else None)
             self._onceki_yenile(gecikme=300)        # inen mizan / kebir dosyaları nota yansısın
             self.kok.after(60, lambda v=veri: self._kdvkar_sonucu(v))
         elif tur == "rapor_kaydedildi":
@@ -3081,10 +3438,17 @@ class Uygulama:
                 self.onceki = veri
                 self._onceki_goster()
                 self._durumlari_ciz()
+        elif tur == "gorev_bitti" and self.toplu and veri.get("sira") == self.toplu.get("gorev_sira"):
+            if self.beyan_kosu:
+                self._beyan_bitti()
+            self._toplu_kaydet()                    # toplu işteki firmanın görevi bitti; sıradaki 'calisiyor' False'ta başlar
+        elif tur == "gorev_bitti" and self.aktar_ayar and veri.get("sira") == self.aktar_ayar.get("sira"):
+            a, self.aktar_ayar = self.aktar_ayar, None              # aktarma sonuç olayı üretmeden bitti (ör. başlamadan durduruldu)
+            self._beyan_bitti()
+            if a.get("komut") and self.komut and self.komut.get("durum") == "calisiyor":
+                self._komut_kapat("hata", "aktarma sonuç üretmeden bitti (başlamadan durdurulmuş olabilir)")
         elif tur == "gorev_bitti" and self.beyan_kosu and veri.get("sira") == self.beyan_sira:
             self._beyan_bitti()                     # beyanname görevi sonuç olayı üretmeden bitti (ör. başlamadan durduruldu)
-        elif tur == "gorev_bitti" and self.toplu and veri.get("sira") == self.toplu.get("gorev_sira"):
-            self._toplu_kaydet()                    # toplu sorgudaki firmanın görevi bitti; sıradaki 'calisiyor' False'ta başlar
         elif tur == "gorev_bitti":                  # işçide bir görev bitti: komutun KENDİ görevi 'bitti' olayı üretmeden bittiyse hata
             if (self.komut and self.komut.get("durum") == "calisiyor" and self.komut_sira is not None
                     and veri.get("sira") == self.komut_sira):
