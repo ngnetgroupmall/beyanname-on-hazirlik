@@ -1,5 +1,5 @@
 {
-  "surum": "2026.11.25.1",
+  "surum": "2026.11.26.1",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
@@ -17,7 +17,7 @@
     "luca.py": "f8ceb83bc3cdd132cee529dd0050af5c186dec744b80fddfdf4c39b7ab989a62",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "64040045f5f44b2af78ce22752ce820a7b65f1d9f553acdeea718a008b2ad796",
-    "onhazirlik.py": "103b1ceefcf248d8b627570580156accd0f366c8f009fa34c278b42f04f1d2d5",
+    "onhazirlik.py": "db40b39e5d67dec3297cee68c66af98ad602768743cc9d193bd8c5f8762f50ab",
     "ozet.py": "d54a03d5bad8eed8865cf094801f453894187112dfac8c91f7662830037582db",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
     "tarayici.py": "a9e89948158dd3156b3358a58dc8f9e08406de168f4d23d400af7de67c9ef87a"
