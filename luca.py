@@ -233,7 +233,13 @@ def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
                     dugme_ozeti = _gonder_dugmesi(pg)[1]
                 except Exception:
                     dugme_ozeti = "okunamadı"
-                return "dogrulama", {"resim": _dogrulama_goruntusu(pg, ek[0]), "mesaj": mesaj[i:i + 220],
+                # Authenticator (TOTP) ekranı mı: "İki Aşamalı Doğrulama ... Authenticator ... 6 haneli" + tek kutu, captcha yok.
+                # Belirsizse False: kod kullanıcıdan istenir (program kendiliğinden kod göndermez).
+                metin_duz = _duz(yapi["metin"])
+                iki_asamali = (len(ek) == 1 and "iki asamali dogrulama" in metin_duz and "authenticator" in metin_duz
+                               and "captcha" not in (ek[0]["id"] + ek[0]["name"]).lower()
+                               and not any("captcha" in (r["src"] + r["id"]).lower() for r in yapi["resimler"]))
+                return "dogrulama", {"resim": _dogrulama_goruntusu(pg, ek[0]), "mesaj": mesaj[i:i + 220], "iki_asamali": iki_asamali,
                                      "yapi": f"{_yapi_ozeti(yapi)}; kod kutusu={_girdi_secici(ek[0])}; düğmeler: {dugme_ozeti}"}
         tani = ""
         try:
@@ -257,6 +263,15 @@ def _bilgileri_yaz(pg, musteri_no, kullanici, parola, yalniz_bos=False):
             continue
         if yalniz_bos and kutu.input_value():
             continue
+        _klavyeyle_yaz(kutu, deger)
+
+
+def _klavyeyle_yaz(kutu, deger):
+    """Kutuyu temizleyip değeri tuş tuş yazar (kullanıcının yazması gibi: keydown/keypress/input/keyup olayları oluşur)."""
+    kutu.click()
+    kutu.fill("")
+    kutu.press_sequentially(str(deger), delay=35)
+    if kutu.input_value() != str(deger):           # sanal klavye vb. araya girdiyse doğrudan yazılır
         kutu.fill(str(deger))
 
 
@@ -289,8 +304,10 @@ def giris_kod(ctx, musteri_no, kullanici, parola, kod, bekle_sn=45):
     ek = _ek_girdiler(yapi) if yapi else []
     if not ek:                                       # form başa dönmüş: baştan başlanır (yeni kod istenir)
         return giris_yap(ctx, musteri_no, kullanici, parola, bekle_sn)
+    if not pg.url.startswith(LUCA_GIRIS.split("/LUCASSO/")[0] + "/"):
+        raise LucaHatasi("Luca giriş sayfası beklenen adreste değil; kod gönderilmedi.")
     _bilgileri_yaz(pg, musteri_no, kullanici, parola, yalniz_bos=True)
-    pg.locator(_girdi_secici(ek[0])).first.fill(str(kod))
+    _klavyeyle_yaz(pg.locator(_girdi_secici(ek[0])).first, kod)
     return _gonder_ve_bekle(pg, (musteri_no, kullanici, parola, kod), bekle_sn, kod_girdisi=_girdi_secici(ek[0]))
 
 
@@ -337,6 +354,27 @@ def _pencere_ozeti(ctx):
     return " || ".join(ozet) or "açık pencere yok"
 
 
+def sso_tanisi(istek):
+    """ssoGiris.do isteğinin DEĞER İÇERMEYEN özeti: yöntem, form alan adları ve değer uzunlukları, başlıklardan referer/origin yolu."""
+    from urllib.parse import parse_qsl
+    try:
+        alanlar = parse_qsl(istek.post_data or "", keep_blank_values=True)
+    except Exception:
+        alanlar = []
+    b = istek.headers
+    return (f"{istek.method}; alanlar=" + (", ".join(f"{a}:{len(v)}" for a, v in alanlar) or "yok")
+            + f"; referer={urlparse(b.get('referer', '')).hostname}{urlparse(b.get('referer', '')).path.split(';')[0]}"
+            + f"; origin={b.get('origin', '-')}; çerez={'var' if b.get('cookie') else 'yok/görünmüyor'}")
+
+
+def _sayfa_metni(r):
+    """Hata yanıtının görünür metni (kısa; giriş bilgisi içermez)."""
+    try:
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text())).strip()[:300]
+    except Exception as e:
+        return f"okunamadı ({type(e).__name__})"
+
+
 def _uygulama_hazir(ctx):
     pg = luca_sayfasi(ctx)
     if pg is None:
@@ -375,6 +413,8 @@ def uygulama_ac(ctx, deneme_sayisi=3, bekle_sn=25, gunluk=lambda m: None):
             b = r.headers
             konum = f" -> {urlparse(b['location']).path.split(';')[0]}" if b.get("location") else ""
             yanitlar.append(f"{r.request.method} {urlparse(r.url).path.split(';')[0]}: {r.status}{konum} [{b.get('content-type', '?')[:24]}, {b.get('content-length', '?')} bayt]")
+            if "ssoGiris" in r.url:
+                yanitlar.append("ssoGiris isteği: " + sso_tanisi(r.request) + (" | hata sayfası: " + _sayfa_metni(r) if r.status >= 400 else ""))
         except Exception:
             pass
 
@@ -408,6 +448,11 @@ def uygulama_ac(ctx, deneme_sayisi=3, bekle_sn=25, gunluk=lambda m: None):
                     ek.append("okunamadı: " + str(e).splitlines()[0][:80])
             gunluk(f"Luca paketi {deneme}. denemede {bekle_sn} sn içinde açılmadı ({nasil}). Pencereler: {durum}. "
                    f"Sunucu yanıtları: {'; '.join(yanitlar) or 'yok'}. Yeni pencere: {' | '.join(ek) or 'yok'}")
+            if any("ssoGiris.do: 500" in y for y in yanitlar):
+                # 27.11.2026: giriş kutuları fill() ile doldurulunca giriş kabul ediliyor ama paket açılışı (ssoGiris.do) 500 veriyordu;
+                # tuş tuş yazınca (_klavyeyle_yaz) düzeldi. Yine olursa yeniden denemek işe yaramaz: ayrıntı günlükte.
+                raise LucaHatasi("Luca paketi açılmadı (Luca sunucusu ssoGiris hatası verdi; ayrıntı günlükte). Açık pencerede Luca'dan çıkış "
+                                 "yapıp 'Tarayıcıda elle giriş yap' ile girin.")
             for yeni_pg in [p for p in ctx.pages if not p.is_closed() and p not in onceki]:      # bu denemede açılan boş/yarım pencere
                 try:
                     yeni_pg.close()

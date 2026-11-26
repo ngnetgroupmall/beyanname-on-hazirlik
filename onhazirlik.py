@@ -38,6 +38,7 @@ import giris_kasasi  # noqa: E402
 import guncelle  # noqa: E402
 import luca_kasasi  # noqa: E402
 import pano  # noqa: E402
+import totp_kasasi  # noqa: E402
 from tarayici import FATURA_SORGULARI, LUCA_SORGULARI, SORGULAR, Isci, acil_metni, kisa_sonuc  # noqa: E402
 
 PROGRAM_ADI = "Beyanname Ön Hazırlık"
@@ -100,6 +101,8 @@ ONCEKI_STIL = {"veri": (R["yesil"], "✓"), "kayit_yok": (R["yok"], "✓"), "hat
 OTURUM_SAAT = 8          # programda son işlemden sonra arka plan giriş denetiminin (oturumu açık tutan) süreceği saat
 # Luca girişi programın içinden yapılır mı? Hayır (kullanıcı kararı 19.11.2026): Luca'nın geçiş sayfası gizli tarayıcıda sunucu hatası
 # veriyor (LUCA_NOTLARI.md), bu yüzden Luca'ya görünür tarayıcı penceresinden elle girilir. True yapılırsa program içi giriş formu döner.
+# İstisna (kullanıcı kararı 27.11.2026): kayıtlı Luca hesabının Authenticator anahtarı tanımlıysa (totp_kasasi.py) giriş programın içinden
+# yapılır: işçi girişi GÖRÜNÜR pencerede yapar, "İki Aşamalı Doğrulama" kodunu program üretip bir kez gönderir, paketi kendisi açar.
 LUCA_PROGRAM_ICI_GIRIS = False
 
 # Önceki indirme notu (kullanıcı isteği 20.11.2026): seçilen firma + dönemde daha önce indirilmiş veri ekranda not olarak ve sorgu
@@ -614,8 +617,71 @@ class AktarPenceresi(tk.Toplevel):
         self.destroy()
 
 
+class TotpPenceresi(tk.Toplevel):
+    """Bir hesabın Authenticator anahtarını tanımlar ya da siler (totp_kasasi.py). Anahtar maskeli yazılır; günlüğe yazılmaz."""
+
+    def __init__(self, ust, ad, hesap_yazisi):
+        super().__init__(ust)
+        self.ad, self.degisti = ad, False
+        self.title("Authenticator anahtarı")
+        self.resizable(False, False)
+        self.configure(bg=R["kart"])
+        ana = tk.Frame(self, bg=R["kart"], padx=18, pady=14)
+        ana.pack(fill="both", expand=True)
+        tk.Label(ana, text="Authenticator anahtarı", bg=R["kart"], fg=R["lacivert"], font=(YAZI, 13, "bold")).pack(anchor="w")
+        tanimli = totp_kasasi.oku(ad) is not None
+        tk.Label(ana, text=f"Hesap: {hesap_yazisi}\n"
+                           + ("Bu hesap için anahtar TANIMLI; yenisini yazarsanız eskisinin yerine geçer.\n\n" if tanimli else "\n")
+                           + "Luca'da iki aşamalı doğrulamayı Authenticator ile kurarken gösterilen anahtarı (\"kodu elle gir\") ya da "
+                             "Google Authenticator'ın \"Hesapları aktar\" adresini (otpauth-migration://…) buraya yapıştırın. "
+                             "Program doğrulama kodunu bu anahtardan üretir ve girişte kendisi yazar; telefonunuzdaki uygulama "
+                             "çalışmaya devam eder.\n\nAnahtar bu bilgisayarda, Windows hesabınıza bağlı şifreli saklanır.",
+                 bg=R["kart"], fg=R["yazi"], font=(YAZI, 9), wraplength=420, justify="left").pack(anchor="w", pady=(4, 8))
+        self.kutu = ttk.Entry(ana, width=56, show="•")
+        self.kutu.pack(anchor="w")
+        self.kutu.bind("<Return>", lambda e: self._kaydet())
+        self.mesaj = tk.Label(ana, text="", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9), wraplength=420, justify="left")
+        self.mesaj.pack(anchor="w", pady=(6, 0))
+        alt = tk.Frame(ana, bg=R["kart"])
+        alt.pack(anchor="w", pady=(8, 0))
+        dugme(alt, "Kaydet", self._kaydet, ana=True).pack(side="left")
+        if tanimli:
+            dugme(alt, "Anahtarı sil", self._sil, kucuk=True).pack(side="left", padx=(8, 0))
+        dugme(alt, "Vazgeç", self.destroy, kucuk=True).pack(side="left", padx=(8, 0))
+        self.transient(ust)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        self.geometry(f"+{ust.winfo_rootx() + 30}+{ust.winfo_rooty() + 30}")
+        self.grab_set()
+        self.kutu.focus_set()
+
+    def _kaydet(self):
+        try:
+            kayit = totp_kasasi.anahtar_coz(self.kutu.get())
+        except ValueError as e:
+            self.mesaj.configure(text=str(e))
+            return
+        try:
+            totp_kasasi.kaydet(self.ad, kayit)
+        except Exception as e:
+            self.mesaj.configure(text=f"Anahtar saklanamadı ({type(e).__name__}).")
+            return
+        self.degisti = True
+        self.destroy()
+
+    def _sil(self):
+        try:
+            totp_kasasi.sil(self.ad)
+        except Exception as e:
+            self.mesaj.configure(text=f"Anahtar silinemedi ({type(e).__name__}).")
+            return
+        self.degisti = True
+        self.destroy()
+
+
 class LucaGirisPenceresi(tk.Toplevel):
     """Luca girişi programın içinde: üye (müşteri) no + kullanıcı adı + parola (kayıtlıysa sorulmaz).
+    Hesabın Authenticator anahtarı tanımlıysa "İki Aşamalı Doğrulama" kodunu program üretir (pencere başına TEK otomatik deneme).
     Luca ek kod isterse (iki aşamalı doğrulama kapalıyken güvenlik kodu) Luca ekranının görüntüsü gösterilir; kodu kullanıcı yazar
     (program çözmez). Bilgiler gizli tarayıcıdaki gerçek Luca giriş formuna yazılır; parola günlüğe yazılmaz.
     sonra: giriş başarılı olunca çağrılır (ör. Başlat'ı sürdürmek için); lucasiz: 'Luca'sız devam et' komutu (varsa düğme çıkar)."""
@@ -630,30 +696,26 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.bekleyen = None                        # (üye no, kullanıcı, parola, sakla) — Luca kabul edince saklanır
         self.k_musteri, self.k_kullanici, self.k_parola = luca_kasasi.oku()
         self.duzenle = not self.k_parola
+        self.totp_denendi, self.totp_is = False, None
+        # program içi giriş: genel ayar ya da kayıtlı hesabın Authenticator anahtarı tanımlı (kod üretilir, giriş kendiliğinden yapılır)
+        self.ici = LUCA_PROGRAM_ICI_GIRIS or bool(self.k_parola and totp_kasasi.oku(self._totp_adi(self.k_musteri, self.k_kullanici)))
         ana = tk.Frame(self, bg=R["kart"], padx=18, pady=14)
         ana.pack(fill="both", expand=True)
         tk.Label(ana, text="Luca Girişi", bg=R["kart"], fg=R["lacivert"], font=(YAZI, 13, "bold")).pack(anchor="w")
-        tk.Label(ana, text=("Luca sorguları için giriş gerekir. Tarayıcı arka planda çalışır; girişi buradan yapın." if LUCA_PROGRAM_ICI_GIRIS
-                            else "Luca sorguları için giriş gerekir."), bg=R["kart"],
-                 fg=R["gri"], font=(YAZI, 9), wraplength=380, justify="left").pack(anchor="w", pady=(0, 10))
+        self.aciklama = tk.Label(ana, text="", bg=R["kart"], fg=R["gri"], font=(YAZI, 9), wraplength=380, justify="left")
+        self.aciklama.pack(anchor="w", pady=(0, 10))
         self.govde = tk.Frame(ana, bg=R["kart"])
         self.govde.pack(fill="both", expand=True)
         self.mesaj = tk.Label(ana, text="", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9), wraplength=380, justify="left")
         self.mesaj.pack(anchor="w", pady=(8, 0))
-        alt = tk.Frame(ana, bg=R["kart"])
-        alt.pack(fill="x", pady=(10, 0))
-        if LUCA_PROGRAM_ICI_GIRIS:                  # program içi giriş açıkken yedek bağlantı; kapalıyken ana düğme zaten bunu yapar
-            e = tk.Label(alt, text="Tarayıcıda elle giriş yap", bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 9, "underline"))
-            e.pack(side="left")
-            e.bind("<Button-1>", lambda ev: self._elle())
-        if lucasiz is not None:
-            s = tk.Label(alt, text="Luca'sız devam et", bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 9, "underline"))
-            s.pack(side="right")
-            s.bind("<Button-1>", lambda ev: self._lucasiz())
+        self.alt = tk.Frame(ana, bg=R["kart"])
+        self.alt.pack(fill="x", pady=(10, 0))
         self.sakla = tk.BooleanVar(value=True)
         self.musteri = self.kullanici = self.parola = None
         self.resim = self.kod = None                # Luca'nın istediği doğrulamanın görüntüsü ve kod kutusu
-        if LUCA_PROGRAM_ICI_GIRIS:
+        self.kod_totp = False                       # istenen kod Authenticator kodu mu (değilse resimli güvenlik kodu)
+        self._alt_ciz()
+        if self.ici:
             self._form()
         else:
             self._tarayici_bilgisi()
@@ -665,8 +727,83 @@ class LucaGirisPenceresi(tk.Toplevel):
         y = uyg.kok.winfo_rooty() + max(0, (uyg.kok.winfo_height() - self.winfo_reqheight()) // 4)
         self.geometry(f"+{x}+{y}")
         self.grab_set()
-        if LUCA_PROGRAM_ICI_GIRIS and not self.duzenle:     # kayıtlı bilgiyle kendiliğinden dener
+        if self.ici and not self.duzenle:           # kayıtlı bilgiyle kendiliğinden dener
             self.after(150, self._giris)
+
+    # ---- Authenticator (TOTP)
+    @staticmethod
+    def _totp_adi(musteri, kullanici):
+        return totp_kasasi.hesap_adi("luca", musteri, kullanici)
+
+    def _alt_ciz(self):
+        self.aciklama.configure(text="Luca sorguları için giriş gerekir. Giriş, açılan tarayıcı penceresinde program tarafından yapılır."
+                                if self.ici else "Luca sorguları için giriş gerekir.")
+        for w in self.alt.winfo_children():
+            w.destroy()
+
+        def baglanti(metin, komut, yan="left", bosluk=0):
+            b = tk.Label(self.alt, text=metin, bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 9, "underline"))
+            b.pack(side=yan, padx=(bosluk, 0))
+            b.bind("<Button-1>", lambda ev: komut())
+        if self.ici:
+            baglanti("Tarayıcıda elle giriş yap", self._elle)
+            baglanti("Authenticator anahtarı", self._totp_tikla, bosluk=14)
+        else:
+            baglanti("Authenticator ile otomatik giriş", self._ici_gec)
+        if self.lucasiz is not None:
+            baglanti("Luca'sız devam et", self._lucasiz, yan="right")
+
+    def _ici_gec(self):
+        """Tarayıcıdan elle giriş ekranından program içi girişe geçer (bilgiler + Authenticator anahtarı tanımlanır)."""
+        if self.bekliyor:
+            return
+        self.ici = True
+        self._alt_ciz()
+        self._form()
+        self.mesaj.configure(text="Üye no, kullanıcı adı ve parolayı yazın; alttaki 'Authenticator anahtarı' ile anahtarı tanımlayın; "
+                                  "sonra 'Giriş yap'.", fg=R["gri"])
+
+    def _totp_tikla(self):
+        if self.bekliyor:
+            return
+        if self.bekleyen:
+            m, k = self.bekleyen[0], self.bekleyen[1]
+        elif self.duzenle and self.musteri is not None:
+            m, k = self.musteri.get().strip(), self.kullanici.get().strip()
+        else:
+            m, k = self.k_musteri, self.k_kullanici
+        if not m or not k:
+            self.mesaj.configure(text="Önce üye no ve kullanıcı adını yazın.", fg=R["kirmizi"])
+            return
+        p = TotpPenceresi(self, self._totp_adi(m, k), f"Luca {m} / {k}")
+        self.wait_window(p)
+        try:
+            self.grab_set()
+        except tk.TclError:
+            return
+        if p.degisti and self.kod is not None and self.kod_totp:
+            self.totp_denendi = False               # kod adımında tanımlandı: yeni anahtarla bir kez denenir
+            self._totp_gonder()
+
+    def _totp_gonder(self):
+        """Authenticator kodunu kayıtlı anahtardan üretip gönderir (pencere başına TEK deneme)."""
+        if self.totp_denendi or self.kod is None or not self.bekleyen:
+            return
+        m, k, pr, _ = self.bekleyen
+        kayit = totp_kasasi.oku(self._totp_adi(m, k))
+        if kayit is None:
+            return
+        self.totp_denendi = True                    # zamanlayıcıdan ÖNCE: form yenilense de ikinci kez denenmez
+        self.bekle(True, "Authenticator kodu gönderiliyor…")
+
+        def yap():
+            self.totp_is = None
+            try:
+                self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, kod=totp_kasasi.kod(kayit))
+            except Exception:
+                self.bekle(False, "Authenticator kodu üretilemedi; kodu telefonunuzdan yazın.")
+        kalan = totp_kasasi.kalan(kayit)            # süresi bitmek üzere olan kod yolda geçersiz kalmasın: yenisi beklenir
+        self.totp_is = self.after(int((kalan + 1) * 1000) if kalan < 3 else 50, yap)
 
     def _tarayici_bilgisi(self):
         """Program içi giriş kapalıyken: kısa açıklama + Luca için tarayıcı penceresini açan düğme."""
@@ -681,7 +818,9 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.b_giris = b.d
 
     # ---- 2. adım: Luca ek kod istiyor (güvenlik kodu / doğrulama kodu). Görüntü yalnız gösterilir; kodu kullanıcı yazar.
-    def dogrulama_goster(self, png, mesaj=""):
+    def dogrulama_goster(self, png, mesaj="", iki_asamali=False):
+        """iki_asamali: Luca'nın Authenticator kodu ekranı (sayfa ve kutu doğrulandı); anahtar tanımlıysa kodu program gönderir."""
+        self.kod_totp = bool(iki_asamali)
         for w in self.govde.winfo_children():
             w.destroy()
         g = self.govde
@@ -696,7 +835,7 @@ class LucaGirisPenceresi(tk.Toplevel):
             tk.Label(g, text="Görüntü gösterilemedi; 'Tarayıcıda elle giriş yap' ile deneyin.", bg=R["kart"], fg=R["kirmizi"], font=(YAZI, 9)).pack(anchor="w")
         s = tk.Frame(g, bg=R["kart"])
         s.pack(anchor="w", pady=(8, 0))
-        tk.Label(s, text="Görüntüdeki kod", bg=R["kart"], font=(YAZI, 9)).pack(side="left")
+        tk.Label(s, text="Authenticator kodu" if iki_asamali else "Görüntüdeki kod", bg=R["kart"], font=(YAZI, 9)).pack(side="left")
         self.kod = ttk.Entry(s, width=16, font=(YAZI, 12))
         self.kod.pack(side="left", padx=(8, 8))
         self.kod.bind("<Return>", lambda ev: self._kod_gonder())
@@ -707,6 +846,8 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.bekle(False, "")
         self.update_idletasks()
         self.kod.focus_set()
+        if iki_asamali:
+            self._totp_gonder()
 
     def _kod_gonder(self):
         if self.bekliyor or self.kod is None or not self.bekleyen:
@@ -833,6 +974,12 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.kapat()
 
     def kapat(self):
+        if self.totp_is is not None:
+            try:
+                self.after_cancel(self.totp_is)
+            except tk.TclError:
+                pass
+            self.totp_is = None
         self.uyg.luca_p = None
         try:
             self.grab_release()
@@ -3462,7 +3609,7 @@ class Uygulama:
         elif tur == "luca_giris_sonuc" and self.luca_p is not None:
             self.luca_p.sonuc(veri)
         elif tur == "luca_giris_dogrulama" and self.luca_p is not None:
-            self.luca_p.dogrulama_goster(veri["resim"], veri.get("mesaj", ""))
+            self.luca_p.dogrulama_goster(veri["resim"], veri.get("mesaj", ""), bool(veri.get("iki_asamali")))
         elif tur == "luca_firmalar" and veri:
             self.luca_firmalar = [(str(i), str(a)) for i, a in veri]
             try:

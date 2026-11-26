@@ -232,6 +232,14 @@ class Isci:
             if self.ctx is ctx:
                 self.ctx = None
         ctx.on("close", kapandi)
+        if gorunur:                                 # teşhis (27.11.2026): Luca paket açılışı isteği, elle ve otomatik girişte karşılaştırılır
+            def sso(r):
+                try:
+                    if "ssoGiris" in r.url and r.request.resource_type == "document":
+                        self._olay("ayrinti", f"{time.strftime('%d.%m.%Y %H:%M:%S')} Luca ssoGiris yanıtı {r.status}: {luca.sso_tanisi(r.request)}")
+                except Exception:
+                    pass
+            ctx.on("response", sso)
         self.ctx, self.gorunur = ctx, gorunur
 
     def _acik_sayfalar(self):
@@ -373,8 +381,11 @@ class Isci:
         gizli = (musteri_no, kullanici, parola, kod)
         asama = "tarayıcı"
         try:
-            if not self._acik_mi():
-                self._tarayici_baslat(False)
+            # Luca paketi gizli tarayıcıda açılmıyor (LUCA_NOTLARI.md: ssoGiris.do HTTP 500): program içi giriş GÖRÜNÜR pencerede yapılır
+            if not self._acik_mi() or not self.gorunur:
+                self._tarayici_kapat()
+                self._tarayici_baslat(True)
+                self._log("Luca girişi için tarayıcı penceresi açıldı.")
             if self._luca_kontrol():
                 durum, mesaj = "tamam", ""
             elif kod is None and luca.portal_sayfasi(self.ctx) is not None and self._luca_paketi_dene():
@@ -389,7 +400,9 @@ class Isci:
                 if durum == "dogrulama":            # kullanıcıdan kod beklenir
                     self._log("Luca girişi: Luca güvenlik/doğrulama kodu istiyor.")
                     self._olay("ayrinti", "Luca doğrulama sayfası yapısı (değer içermez): " + str(mesaj.get("yapi", "")))
-                    self._olay("luca_giris_dogrulama", {"resim": mesaj["resim"], "mesaj": mesaj.get("mesaj", "")})
+                    self._durum_bildir()            # tarayıcı görünür açıldı
+                    self._olay("luca_giris_dogrulama", {"resim": mesaj["resim"], "mesaj": mesaj.get("mesaj", ""),
+                                                        "iki_asamali": bool(mesaj.get("iki_asamali"))})
                     return
                 if durum == "robot":
                     durum = "hata"
