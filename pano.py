@@ -207,7 +207,7 @@ class Pano(tk.Frame):
             self.tablo.grid_columnconfigure(n, minsize=gen, weight=1 if n == 0 else 0)
         serit = tk.Frame(tk_, bg="#fafbfc", highlightthickness=1, highlightbackground="#eef1f4")
         serit.pack(fill="x", side="bottom")
-        self.serit_l = tk.Label(serit, text="", bg="#fafbfc", fg="#46586b", font=("Consolas", 9), anchor="w")
+        self.serit_l = tk.Label(serit, text="", bg="#fafbfc", fg="#46586b", font=("Consolas", 9), anchor="w", width=1)    # uzun satır genişletmesin
         self.serit_l.pack(side="left", fill="x", expand=True, padx=10, pady=5)
         g = tk.Label(serit, text="Günlüğü aç ▸", bg="#fafbfc", fg=R["mavi"], font=(Y, 9), cursor="hand2")
         g.pack(side="right", padx=10)
@@ -215,7 +215,7 @@ class Pano(tk.Frame):
 
         # ---- çekmece
         self.cek = tk.Frame(ana, bg=R["kart"], highlightthickness=1, highlightbackground="#c9d6e4", width=CEKMECE)
-        self.cek.pack(side="left", fill="y", padx=(12, 0))
+        self.cek.pack(side="right", fill="y", padx=(12, 0), before=tk_)     # çekmece yerini önce alır; tablo kalanı doldurur
         self.cek.pack_propagate(False)
         tk.Frame(self.cek, bg="#2c6fb7", width=3).pack(side="left", fill="y")
         ic = tk.Frame(self.cek, bg=R["kart"])
@@ -653,15 +653,22 @@ class Pano(tk.Frame):
         canli = bool(u.kosu_hedef and u.kosu_hedef == (t["id"], u.ay_no, u.yil_no) and (u.kosu or u.sorgu_durumu))
         kaynak = dict(u.sorgu_durumu) if canli else dict((self.satirlar.get(t["id"]) or {}).get("sonuclar") or {})
         x = self.satirlar.get(t["id"]) or {}
-        hatalar = [a for a, _ in self.oh.SORGULAR if kaynak.get(a) == "hata"] if not (u.kosu or u.calisiyor) else []
-        if hatalar:                                 # yalnız hatalı sorguları yeniden çalıştırma kısayolu (kullanıcı isteği 27.11.2026)
-            hb = tk.Button(self.cek_ic, text=f"↻  Hatalı {len(hatalar)} sorguyu yeniden sorgula", command=self._hatalilari_sorgula,
-                           relief="flat", bd=0, cursor="hand2", font=(Y, 9, "bold"), bg="#fff6f5", fg="#b0362a", activebackground="#fbe5e3",
-                           activeforeground="#8e2a20", highlightthickness=1, highlightbackground="#e7a59d", pady=4,
+        # kısayollar (kullanıcı isteği 27.11.2026): yalnız hatalı ya da bu dönemde hiç sorgulanmamış sorguları çalıştırır
+        okundu = not (u.kosu or u.calisiyor) and self.okunan_donem == (u.ay_no, u.yil_no) and t["id"] in self.satirlar
+        for tur, (metin, fg, bg, kenar, aktif) in (("hata", ("↻  Hatalı {n} sorguyu yeniden sorgula", "#b0362a", "#fff6f5", "#e7a59d", "#fbe5e3")),
+                                                    ("eksik", ("▶  Bu ay sorgulanmamış {n} sorguyu sorgula", "#2c5f9e", "#f3f7fd", "#9fbde4", "#e3edf9"))):
+            # birikimli dönem sonuçları (canlı kutular yalnız son çalıştırmayı gösterir; 'sorgulanmamış' onlardan hesaplanmaz)
+            liste = self._kisayol_sorgulari(tur, self.satirlar[t["id"]].get("sonuclar") or {}) if okundu else []
+            if not liste:
+                continue
+            hb = tk.Button(self.cek_ic, text=metin.format(n=len(liste)), command=lambda t_=tur: self._kisayol_sorgula(t_),
+                           relief="flat", bd=0, cursor="hand2", font=(Y, 9, "bold"), bg=bg, fg=fg, activebackground=aktif,
+                           activeforeground=fg, highlightthickness=1, highlightbackground=kenar, pady=4,
                            state="disabled" if (u.beyan_kosu or u.toplu) else "normal")
             hb.pack(fill="x", pady=(0, 2))
-            tk.Label(self.cek_ic, text=", ".join(self.oh.KISA_AD.get(a, a) for a in hatalar), bg=R["kart"], fg="#8e2a20", font=(Y, 8),
-                     anchor="w", justify="left", wraplength=CEKMECE - 50).pack(fill="x", pady=(0, 8))
+            ozet = ", ".join(self.oh.KISA_AD.get(a, a) for a in liste[:8]) + (f" … (+{len(liste) - 8})" if len(liste) > 8 else "")
+            tk.Label(self.cek_ic, text=ozet, bg=R["kart"], fg=fg, font=(Y, 8), anchor="w", justify="left",
+                     wraplength=CEKMECE - 50).pack(fill="x", pady=(0, 6))
         if x.get("acil"):
             a = tk.Frame(self.cek_ic, bg="#fbe5e3", highlightthickness=0)
             a.pack(fill="x", pady=(0, 8))
@@ -705,20 +712,29 @@ class Pano(tk.Frame):
                                 "calistirilmadi": ("çalışmadı", "gri")}.get(d, (d, "gri"))
                         self._hap(r, m, b, kalin=False).pack(side="right")
 
-    def _hatalilari_sorgula(self):
-        """Seçili firmanın bu dönemde HATA veren sorgularını (ekrandaki işaretlere dokunmadan) yeniden çalıştırır."""
+    def _kisayol_sorgulari(self, tur, kaynak):
+        """'hata': son sonucu HATA olanlar; 'eksik': bu dönem için hiç sonucu olmayan ya da çalıştırılmamış kalanlar."""
+        if tur == "hata":
+            return [a for a, _ in self.oh.SORGULAR if kaynak.get(a) == "hata"]
+        return [a for a, _ in self.oh.SORGULAR if kaynak.get(a) in (None, "calistirilmadi")]
+
+    def _kisayol_sorgula(self, tur):
+        """Seçili firmanın hatalı ya da sorgulanmamış sorgularını (ekrandaki işaretlere dokunmadan) çalıştırır."""
         u = self.uyg
         t = u._secili()
         if not t or u.calisiyor or u.kosu or u.beyan_kosu or u.toplu:
             return
-        x = self.satirlar.get(t["id"]) or {}
-        if self.okunan_donem != (u.ay_no, u.yil_no):
-            return                                  # tablo başka dönemin verisini gösteriyor
-        hatalar = [a for a, _ in self.oh.SORGULAR if (x.get("sonuclar") or {}).get(a) == "hata"]
-        if not hatalar:
+        if self.okunan_donem != (u.ay_no, u.yil_no) or t["id"] not in self.satirlar:
+            return                                  # tablo başka dönemin verisini gösteriyor / henüz okunmadı
+        liste = self._kisayol_sorgulari(tur, self.satirlar[t["id"]].get("sonuclar") or {})
+        if not liste:
             return
-        u._yaz(f"Hatalı sorgular yeniden sorgulanıyor ({len(hatalar)}): " + ", ".join(self.oh.KISA_AD.get(a, a) for a in hatalar))
-        u._baslat({"secim": {a: a in hatalar for a in u.secim}, "firma": t["id"], "donem": (u.ay_no, u.yil_no)})
+        ad = "Hatalı sorgular yeniden" if tur == "hata" else "Bu ay sorgulanmamış sorgular"
+        u._yaz(f"{ad} sorgulanıyor ({len(liste)}): " + ", ".join(self.oh.KISA_AD.get(a, a) for a in liste))
+        u._baslat({"secim": {a: a in liste for a in u.secim}, "firma": t["id"], "donem": (u.ay_no, u.yil_no)})
+
+    def _hatalilari_sorgula(self):
+        self._kisayol_sorgula("hata")
 
     def _grup_degistir(self, no):
         u = self.uyg

@@ -1,5 +1,5 @@
 {
-  "surum": "2026.11.27.1",
+  "surum": "2026.11.27.2",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
@@ -14,12 +14,12 @@
     "kdv_kar.py": "4a9e8a94b32a2acaf8bc6c18930bc536fb832f400c0fc1e6f10e2048b29719e9",
     "komut.py": "bc378bfa79483305a9ff42ad7bf0e5cd6d43f509874428575090a0a123c2ee92",
     "logo_veri.py": "10ca632f2952864a59579714baa4c12b3538446e20f617d4180b8aefc18bcf7e",
-    "luca.py": "f8ceb83bc3cdd132cee529dd0050af5c186dec744b80fddfdf4c39b7ab989a62",
+    "luca.py": "91a70340f6f97c9e3c42ea52998f4baf4a089755179f8c43ef2bba3f8b00a764",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
-    "luca_sorgu.py": "64040045f5f44b2af78ce22752ce820a7b65f1d9f553acdeea718a008b2ad796",
+    "luca_sorgu.py": "15ecc2faaf847b3b2fed73c072e9c054eb888a09e097a2e71c70d3261afed678",
     "onhazirlik.py": "31e42b4d190d988709e7f2f7587de223610b283a14d9e15b443c49b76af808a0",
     "ozet.py": "e429b249b384e3166031b904a0a5ae64bb38d7c401dc51d57a7c66b56cf2021e",
-    "pano.py": "75baab2253f67accedc148d1a8cff86c9af356422c3a38bfe84ffa81934b638c",
+    "pano.py": "33fd0feea78d81cd5bd6eedeece3e5d82e4a2aa005fa8a4fd1905422a0b8f1bc",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
     "tarayici.py": "5cb17285d9ac920795f6afc71d4d3a23016b1212309c2dc8418b2be4aac9a394"
   }

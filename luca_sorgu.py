@@ -194,12 +194,13 @@ def calistir(anahtar, ctx, pg, sirket_id, ay, yil, gunluk, iptal=lambda: False):
         return emukellef._sonuc(ad, kapsam, "veri", mesaj, kolonlar, tablo), {"tur": "kebir", "bayt": bayt, "bas": bas, "bit": bit}
 
     if anahtar in ("luca_mizan_ay", "luca_mizan_yil"):
-        if anahtar == "luca_mizan_ay":
-            bas = ay_bas
-        else:                                       # 01.01'den; özel hesap döneminde mali dönemin başından
-            d = luca.donem_bilgisi(ctx, pg, sirket_id, donem_id)
-            db, yil_basi = _donem_tarihi(d, "donem_bas"), date(yil, 1, 1)
-            bas = yil_basi if db is None or db <= yil_basi else db
+        # mali dönem yıl/ay başından başlamayabilir (yeni firma) ya da ay ortasında bitebilir: aralık dönemin içinde kalır
+        d = luca.donem_bilgisi(ctx, pg, sirket_id, donem_id)
+        db, de = _donem_tarihi(d, "donem_bas"), _donem_tarihi(d, "donem_bit")
+        bas = ay_bas if anahtar == "luca_mizan_ay" else date(yil, 1, 1)       # ay mizanı ay başından, yıl mizanı 01.01'den
+        if db is not None and db > bas:
+            bas = db
+        ay_bit = de if (de is not None and de < ay_bit) else ay_bit
         bayt, donem = luca.mizan_indir(ctx, pg, sirket_id, donem_id, bas, ay_bit, gunluk, iptal)
         kolonlar, tablo = mizan_tablosu(luca.xlsx_satirlari(bayt))
         kapsam = f"{bas:%d.%m.%Y} - {ay_bit:%d.%m.%Y}"

@@ -4,6 +4,7 @@ Firma seçimi Luca ekranındaki firma/dönem kutusuyla yapılır (kullanıcını
 Rapor, Luca'nın yeni rapor sistemi üzerinden doğrudan HTTP ile istenir, takip edilir ve indirilir.
 """
 import base64
+import calendar
 import io
 import json
 import re
@@ -504,18 +505,33 @@ def _tarih(t):
     return datetime.strptime(t.strip(), "%d/%m/%Y").date()
 
 
+def donem_sec(secenekler, ay_bas, ay_son):
+    """(değer, 'gg/aa/yyyy - gg/aa/yyyy') seçeneklerinden KDV ayıyla ÖRTÜŞEN mali dönem -> (değer, metin, ay başını içeriyor mu)
+    ya da None. Mali dönem yıl başından başlamayabilir (yeni firma: Kirman 15.10.2026–31.12.2026). Birden çok örtüşen varsa
+    ay başını içeren, yoksa ayla örtüşmesi en büyük olan seçilir."""
+    aday = []
+    for deger, metin in secenekler:
+        try:
+            b, e = [_tarih(x) for x in str(metin).split(" - ")]
+        except ValueError:
+            continue
+        if b <= ay_son and e >= ay_bas:
+            aday.append((b <= ay_bas <= e, (min(e, ay_son) - max(b, ay_bas)).days, str(deger), str(metin)))
+    if not aday:
+        return None
+    en = max(aday, key=lambda a: (a[0], a[1]))
+    return en[2], en[3], en[0]
+
+
 def firma_sec(pg, sirket_id, yil, ay, gunluk, iptal=lambda: False):
-    """Luca'da firmayı ve KDV ayını içeren mali dönemi seçer; seçili dönem kimliğini döner."""
-    hedef = date(yil, ay, 1)
+    """Luca'da firmayı ve KDV ayıyla örtüşen mali dönemi seçer; seçili dönem kimliğini döner."""
+    ay_bas, ay_son = date(yil, ay, 1), date(yil, ay, calendar.monthrange(yil, ay)[1])
     s = secili_firma(pg)
     if s["sirket_id"] == str(sirket_id):
-        try:
-            b, e = [_tarih(x) for x in s["donem"].split(" - ")]
-            if b <= hedef <= e:
-                gunluk(f"Luca: firma zaten açık ({s['sirket']}, {s['donem']}).")
-                return s["donem_id"]
-        except ValueError:
-            pass
+        acik = donem_sec([(s["donem_id"], s["donem"])], ay_bas, ay_son)
+        if acik and acik[2]:                        # açık dönem ayın başını içeriyor (ay ortasında değişen dönemde listeden seçilir)
+            gunluk(f"Luca: firma zaten açık ({s['sirket']}, {s['donem']}).")
+            return s["donem_id"]
     fr = _cerceve(pg, "frm4")
     if not fr.query_selector(f"select[name=SirketCombo] option[value='{sirket_id}']"):
         raise LucaHatasi(f"Luca firma listesinde {sirket_id} numaralı firma yok.")
@@ -524,14 +540,9 @@ def firma_sec(pg, sirket_id, yil, ay, gunluk, iptal=lambda: False):
     son = time.time() + 15
     while time.time() < son and donem_id is None:
         secenekler = fr.evaluate("() => Array.from(document.querySelector('select[name=DonemCombo]').options).map(o => [o.value, o.text.trim()])")
-        for deger, metin in secenekler:
-            try:
-                b, e = [_tarih(x) for x in metin.split(" - ")]
-            except ValueError:
-                continue
-            if b <= hedef <= e:
-                donem_id, donem_metni = deger, metin
-                break
+        bulunan = donem_sec(secenekler, ay_bas, ay_son)
+        if bulunan:
+            donem_id, donem_metni = bulunan[0], bulunan[1]
         if donem_id is None:
             time.sleep(0.5)
     if donem_id is None:
