@@ -243,12 +243,21 @@ class Pano(tk.Frame):
         self.b_rapor.grid(row=0, column=0, sticky="we")
         self.b_ver = self._dugme(iki, "Beyanname indir", lambda: self.uyg._verilen_indir())
         self.b_ver.grid(row=0, column=1, sticky="we", padx=(6, 0))
-        k = tk.Label(self.cek_alt_e, text="Ayrıntılı ekran (Klasik) ▸", bg=R["kart"], fg=R["mavi"], font=(Y, 9), cursor="hand2")
-        k.pack(anchor="e", pady=(6, 0))
-        k.bind("<Button-1>", lambda e: self.uyg._gorunum_uygula("klasik"))
         tk.Frame(ic, bg=R["cizgi"], height=1).pack(fill="x", side="bottom")
-        self.cek_ic = tk.Frame(ic, bg=R["kart"])
-        self.cek_ic.pack(fill="both", expand=True, padx=14, pady=8)
+        # grup listesi kaydırılır (27.11.2026): kısayol düğmeleri + 7 grup küçük ekrana sığmıyor, alttaki gruplar (Luca) görünmüyordu
+        kap = tk.Frame(ic, bg=R["kart"])
+        kap.pack(fill="both", expand=True, padx=(14, 2), pady=8)
+        self.cek_tuval = tk.Canvas(kap, bg=R["kart"], highlightthickness=0, bd=0)
+        self.cek_kaydirac = tk.Scrollbar(kap, orient="vertical", command=self.cek_tuval.yview)
+        self.cek_tuval.configure(yscrollcommand=self.cek_kaydirac.set)
+        self.cek_tuval.pack(side="left", fill="both", expand=True)
+        self.cek_ic = tk.Frame(self.cek_tuval, bg=R["kart"])
+        self.cek_ic_id = self.cek_tuval.create_window(0, 0, window=self.cek_ic, anchor="nw")
+        self.cek_ic.bind("<Configure>", lambda e: self._cek_kaydir_guncelle())
+        self.cek_tuval.bind("<Configure>", lambda e: (self.cek_tuval.itemconfigure(self.cek_ic_id, width=e.width),
+                                                      self._cek_kaydir_guncelle()))
+        self.cek_tuval.bind("<Enter>", lambda e: self.cek_tuval.bind_all("<MouseWheel>", self._cek_tekerlek))
+        self.cek_tuval.bind("<Leave>", lambda e: self.cek_tuval.unbind_all("<MouseWheel>"))
         for gv in self.uyg.grup_var:
             gv.trace_add("write", lambda *_: self.after_idle(self._cekmece_gruplar))
         self._filtre_ciz()
@@ -624,6 +633,21 @@ class Pano(tk.Frame):
                 self._hap(self.cek_roz, "Son: " + x["son"][:5] + " " + x["son"][11:16], "mavi", kalin=False).pack(side="left")
         self._cekmece_gruplar()
         self.dugmeler()
+
+    def _cek_kaydir_guncelle(self):
+        """Kaydırma alanını içeriğe göre ayarlar; içerik sığıyorsa kaydırma çubuğu gizlenir ve en üste dönülür."""
+        t = self.cek_tuval
+        t.configure(scrollregion=(0, 0, t.winfo_width(), self.cek_ic.winfo_reqheight()))
+        sigmiyor = self.cek_ic.winfo_reqheight() > t.winfo_height() > 1
+        if sigmiyor and not self.cek_kaydirac.winfo_ismapped():
+            self.cek_kaydirac.pack(side="right", fill="y", before=t)
+        elif not sigmiyor and self.cek_kaydirac.winfo_ismapped():
+            self.cek_kaydirac.pack_forget()
+            t.yview_moveto(0)
+
+    def _cek_tekerlek(self, e):
+        if self.cek_ic.winfo_reqheight() > self.cek_tuval.winfo_height():
+            self.cek_tuval.yview_scroll(int(-e.delta / 120) or (-1 if e.delta > 0 else 1), "units")
 
     def _grup_durumu(self, anahtarlar, kaynak):
         d = [kaynak.get(a) for a in anahtarlar if kaynak.get(a)]

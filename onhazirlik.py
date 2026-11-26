@@ -697,6 +697,7 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.k_musteri, self.k_kullanici, self.k_parola = luca_kasasi.oku()
         self.duzenle = not self.k_parola
         self.totp_denendi, self.totp_is = False, None
+        self.gorunur_mod = False                    # Luca önce arka planda denenir; paket açılmazsa görünür pencereye geçilir
         # program içi giriş: genel ayar ya da kayıtlı hesabın Authenticator anahtarı tanımlı (kod üretilir, giriş kendiliğinden yapılır)
         self.ici = LUCA_PROGRAM_ICI_GIRIS or bool(self.k_parola and totp_kasasi.oku(self._totp_adi(self.k_musteri, self.k_kullanici)))
         ana = tk.Frame(self, bg=R["kart"], padx=18, pady=14)
@@ -799,7 +800,7 @@ class LucaGirisPenceresi(tk.Toplevel):
         def yap():
             self.totp_is = None
             try:
-                self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, kod=totp_kasasi.kod(kayit))
+                self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, kod=totp_kasasi.kod(kayit), gorunur=self.gorunur_mod)
             except Exception:
                 self.bekle(False, "Authenticator kodu üretilemedi; kodu telefonunuzdan yazın.")
         kalan = totp_kasasi.kalan(kayit)            # süresi bitmek üzere olan kod yolda geçersiz kalmasın: yenisi beklenir
@@ -858,14 +859,14 @@ class LucaGirisPenceresi(tk.Toplevel):
             return
         m, k, pr, _ = self.bekleyen
         self.bekle(True, "Kod gönderiliyor…")
-        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, kod=kod)
+        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, kod=kod, gorunur=self.gorunur_mod)
 
     def _yeni_kod(self):
         if self.bekliyor or not self.bekleyen:
             return
         m, k, pr, _ = self.bekleyen
         self.bekle(True, "Yeni kod isteniyor…")
-        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr)
+        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, gorunur=self.gorunur_mod)
 
     def _form(self):
         for w in self.govde.winfo_children():
@@ -915,7 +916,7 @@ class LucaGirisPenceresi(tk.Toplevel):
             return
         self.bekleyen = (m, k, pr, self.sakla.get())
         self.bekle(True, "Luca'ya giriş yapılıyor… (yarım dakika kadar sürebilir)")
-        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr)
+        self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, gorunur=self.gorunur_mod)
 
     def bekle(self, bekliyor, mesaj=""):
         self.bekliyor = bool(bekliyor)
@@ -926,6 +927,13 @@ class LucaGirisPenceresi(tk.Toplevel):
         self.mesaj.configure(text=mesaj, fg=R["gri"] if bekliyor else R["kirmizi"])
 
     def sonuc(self, veri):
+        if veri.get("gizli_basarisiz") and not self.gorunur_mod and self.bekleyen:
+            # arka planda giriş kabul edildi ama paket açılmadı: bir kez görünür pencerede baştan girilir (yeni kod üretilir)
+            self.gorunur_mod, self.totp_denendi, self.kod = True, False, None
+            m, k, pr, _ = self.bekleyen
+            self.bekle(True, "Arka planda Luca açılamadı; görünür pencerede yeniden giriliyor…")
+            self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, gorunur=True)
+            return
         if veri.get("durum") == "tamam":
             if self.bekleyen:
                 m, k, pr, sakla = self.bekleyen

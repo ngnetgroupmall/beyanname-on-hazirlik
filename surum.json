@@ -1,5 +1,5 @@
 {
-  "surum": "2026.11.27.3",
+  "surum": "2026.11.27.4",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
@@ -17,11 +17,11 @@
     "luca.py": "3518db3a04d8868bc6e6cc69b0cd1e9d5c16a7137f61ff8105a50df30de75f33",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "15ecc2faaf847b3b2fed73c072e9c054eb888a09e097a2e71c70d3261afed678",
-    "onhazirlik.py": "d1f99e457b33f36b5864f1a1de4204252db0f6e8427790b5f29315971b8d990b",
+    "onhazirlik.py": "4a7d42545048750dd3764076719eedf17901bf17808485dd117a04419d8568e6",
     "ozet.py": "e429b249b384e3166031b904a0a5ae64bb38d7c401dc51d57a7c66b56cf2021e",
-    "pano.py": "33fd0feea78d81cd5bd6eedeece3e5d82e4a2aa005fa8a4fd1905422a0b8f1bc",
+    "pano.py": "b0ec3ae90840046f10ccabbc597387a855955c7e4b0caf5acd892a7e0c4ce637",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
-    "tarayici.py": "bf4bcaa87e9a3a3cbff2e7573eb5f747ab8087cb322bc0a750251acd5ff3a6c8",
+    "tarayici.py": "b35d5e0a7d280b1166f0570f8b25f8a92a03762cfe176dcc773c4287290750c3",
     "totp_kasasi.py": "cde658b4f3700547573fc007419afffb15319eec87a289f2400cf1dd57589a12"
   }
 }

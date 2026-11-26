@@ -124,6 +124,16 @@ def acil_metni(s):
     return m[i:i + 300] if i >= 0 else ""
 
 
+def _ekran_disi_konum():
+    """Tüm ekranların (sanal masaüstü) solunda, görünmeyen bir konum. -32000 Windows'ta simge durumu koordinatı olduğundan kullanılmaz."""
+    try:
+        import ctypes
+        g = ctypes.windll.user32.GetSystemMetrics
+        return g(76) - 1280 - 400, g(77)              # SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN
+    except Exception:
+        return -5000, 0
+
+
 class Isci:
     FORM = "#giris_form_load"                       # E-Mükellef giriş formunun yüklendiği kutu
 
@@ -133,6 +143,7 @@ class Isci:
         self.iptal_istendi = threading.Event()
         self.ctx = None
         self.gorunur = False                        # tarayıcı penceresi görünür mü (varsayılan: arka planda)
+        self.ekran_disi = False                     # gerçek pencere ama ekranın dışında (Luca için; kullanıcı görmez)
         self.oturum = None                          # son bilinen E-Mükellef giriş durumu
         self.luca = None                            # son bilinen Luca oturumu (None: bakılmadı)
         self.luca_liste_alindi = False
@@ -211,11 +222,18 @@ class Isci:
             except Exception:
                 pass
 
-    def _tarayici_baslat(self, gorunur):
-        """Chrome'u kalıcı profille açar. Varsayılan arka planda (penceresiz); gorunur=True elle giriş/sorun giderme içindir."""
+    def _tarayici_baslat(self, gorunur, ekran_disi=False):
+        """Chrome'u kalıcı profille açar. Varsayılan arka planda (penceresiz); gorunur=True elle giriş/sorun giderme içindir.
+        ekran_disi=True (27.11.2026): gerçek Chrome penceresi ama ekranın dışında — Luca paketi gizli (headless) tarayıcıda
+        ssoGiris 500 veriyor; tarayıcı kimliği değiştirilmeden Luca'yı kullanıcıya pencere göstermeden açmanın yolu bu."""
         PROFIL.mkdir(parents=True, exist_ok=True)
         try:
-            if gorunur:
+            if ekran_disi and not gorunur:
+                sol, ust = _ekran_disi_konum()
+                ctx = self.p.chromium.launch_persistent_context(
+                    str(PROFIL), channel="chrome", headless=False, viewport={"width": 1280, "height": 900},
+                    accept_downloads=False, args=[f"--window-position={sol},{ust}", "--window-size=1280,900"])
+            elif gorunur:
                 ctx = self.p.chromium.launch_persistent_context(
                     str(PROFIL), channel="chrome", headless=False, no_viewport=True,
                     accept_downloads=False, args=["--start-maximized"])
@@ -232,6 +250,34 @@ class Isci:
             if self.ctx is ctx:
                 self.ctx = None
         ctx.on("close", kapandi)
+        if ekran_disi and not gorunur:              # Luca'nın window.open ile açtığı pencereler de ekran dışına taşınır
+            tasinan = set()
+
+            def disari(pg):
+                s = None
+                try:
+                    s = ctx.new_cdp_session(pg)
+                    w = s.send("Browser.getWindowForTarget")["windowId"]
+                    if w in tasinan:
+                        return
+                    sol, ust = _ekran_disi_konum()
+                    if s.send("Browser.getWindowBounds", {"windowId": w})["bounds"].get("windowState") != "normal":
+                        s.send("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}})
+                    s.send("Browser.setWindowBounds", {"windowId": w, "bounds": {"left": sol, "top": ust, "width": 1280, "height": 900}})
+                    tasinan.add(w)
+                    b = s.send("Browser.getWindowBounds", {"windowId": w})["bounds"]
+                    self._olay("ayrinti", f"Ekran dışı pencere {w}: sol={b.get('left')} üst={b.get('top')} durum={b.get('windowState')}")
+                except Exception as e:
+                    self._olay("ayrinti", f"Pencere ekran dışına taşınamadı: {type(e).__name__}: {str(e)[:120]}")
+                finally:
+                    if s is not None:
+                        try:
+                            s.detach()
+                        except Exception:
+                            pass
+            ctx.on("page", disari)
+            for pg in list(ctx.pages):
+                disari(pg)
         if gorunur:                                 # teşhis (27.11.2026): Luca paket açılışı isteği, elle ve otomatik girişte karşılaştırılır
             def sso(r):
                 try:
@@ -240,7 +286,7 @@ class Isci:
                 except Exception:
                     pass
             ctx.on("response", sso)
-        self.ctx, self.gorunur = ctx, gorunur
+        self.ctx, self.gorunur, self.ekran_disi = ctx, gorunur, bool(ekran_disi and not gorunur)
 
     def _acik_sayfalar(self):
         return [p for p in self.ctx.pages if not p.is_closed()] if self.ctx else []
@@ -377,15 +423,21 @@ class Isci:
         except Exception:
             return False
 
-    def _g_luca_giris(self, musteri_no, kullanici, parola, kod=None):
+    def _g_luca_giris(self, musteri_no, kullanici, parola, kod=None, gorunur=False):
+        """gorunur=False (27.11.2026): giriş önce arka plandaki (gizli) tarayıcıda denenir — 19.11'deki 'gizli tarayıcıda paket 500'
+        bulgusu girişin fill() ile yapılmasından olabilir. Paket açılmazsa sonuçta 'gizli_basarisiz' döner; arayüz görünür pencerede
+        yeniden dener. gorunur=True: giriş görünür pencerede yapılır (açık tarayıcı gizliyse kapatılıp görünür açılır)."""
         gizli = (musteri_no, kullanici, parola, kod)
         asama = "tarayıcı"
         try:
-            # Luca paketi gizli tarayıcıda açılmıyor (LUCA_NOTLARI.md: ssoGiris.do HTTP 500): program içi giriş GÖRÜNÜR pencerede yapılır
-            if not self._acik_mi() or not self.gorunur:
+            if gorunur and (not self._acik_mi() or not self.gorunur):
                 self._tarayici_kapat()
                 self._tarayici_baslat(True)
                 self._log("Luca girişi için tarayıcı penceresi açıldı.")
+            elif not gorunur and (not self._acik_mi() or not (self.gorunur or self.ekran_disi)):
+                self._tarayici_kapat()              # gizli (headless) tarayıcıda Luca paketi açılmıyor: ekran dışı gerçek pencere
+                self._tarayici_baslat(False, ekran_disi=True)
+                self._log("Luca girişi için tarayıcı arka planda açıldı (pencere ekranın dışında).")
             if self._luca_kontrol():
                 durum, mesaj = "tamam", ""
             elif kod is None and luca.portal_sayfasi(self.ctx) is not None and self._luca_paketi_dene():
@@ -422,8 +474,14 @@ class Isci:
             m = luca._ayikla(str(e).splitlines()[0] if str(e) else type(e).__name__, gizli)
             self._luca_guncelle(sessiz=True)
             self._durum_bildir()
-            self._log(f"HATA: Luca girişi tamamlanamadı (aşama: {asama}): {m}")
-            self._olay("luca_giris_sonuc", {"durum": "hata", "mesaj": f"Luca girişi yapılamadı (aşama: {asama}): {m}"})
+            gizli_basarisiz = asama.startswith("Luca paketini açma") and not self.gorunur
+            if gizli_basarisiz:
+                self._log("Luca paketi arka planda (ekran dışı pencerede) açılmadı; görünür pencerede yeniden denenecek.")
+                self._olay("ayrinti", f"Gizli tarayıcıda Luca paketi: {m}")
+            else:
+                self._log(f"HATA: Luca girişi tamamlanamadı (aşama: {asama}): {m}")
+            self._olay("luca_giris_sonuc", {"durum": "hata", "mesaj": f"Luca girişi yapılamadı (aşama: {asama}): {m}",
+                                            "gizli_basarisiz": gizli_basarisiz})
 
     def _captcha_al(self, sayfa):
         sayfa.wait_for_selector("#captcha-image", state="visible", timeout=30_000)
