@@ -1646,6 +1646,18 @@ def _tarih_zaman(metin):
         return None
 
 
+def _tebligat_id(satir):
+    """DataTables satırının ilk hücresindeki <input name="Sec[]" value="..."> değeri (tebligat ID'si); yoksa None."""
+    if not isinstance(satir, (list, tuple)) or not satir:
+        return None
+    for etiket in re.findall(r"<input\b[^>]*>", str(satir[0]), re.I):
+        if re.search(r"""name\s*=\s*['"]?Sec\[\]""", etiket, re.I):
+            m = re.search(r"""value\s*=\s*['"]?([^'"\s>]+)""", etiket, re.I)
+            if m:
+                return m.group(1)
+    return None
+
+
 def imzali_pdf_cikar(bayt):
     """E-tebligat dosyası CMS/PKCS#7 imzalı pakettir; içindeki PDF'i (%PDF- .. son %%EOF) çıkarır, açılamazsa None."""
     if not bayt:
@@ -1695,11 +1707,20 @@ def etebligat(ctx, mid, guncelle=True, iptal=lambda: False):
                         hatalar.append(f"{ad}: {_html_metin(d.get('msg')) or d.get('error_code') or 'hata'}")
                     # Yalnız "Listelenecek tebligat bulunamadı." (hiç tebligatı olmayan firma) hata sayılmaz; başka "bulunamadı"lar hatadır
                 notlar.append("Kurum sorgusu: " + ("; ".join(yeni) if yeni else "yeni tebligat yok") + ".")
-        satirlar_ham = []
+        satirlar_ham, gorulen = [], set()
         for yil in sorted({bas.year, bit.year}):
-            form = [("draw", "1"), ("start", "0"), ("length", "-1"), ("user_id[]", str(mid)), ("ay", "tum-aylar"), ("yil", str(yil)),
-                    ("birimler", ""), ("okundu", ""), ("aciklama", "")]
-            satirlar_ham += _tablo_json(_post(ctx, sayfa, sayfa + "/datatable", form), sayfa + "/datatable")
+            # DİKKAT: okundu="" "tümü" DEĞİL, yalnız okunmuşları döndürüyor (Erenay 11/2026: 1 okunmuş, 17 okunmamış kaçtı).
+            # Okunmamış (0) ve okunmuş (1) ayrı istenir, tebligat ID'siyle (ilk hücredeki Sec[] checkbox değeri) tekilleştirilir.
+            for okundu in ("0", "1"):
+                form = [("draw", "1"), ("start", "0"), ("length", "-1"), ("user_id[]", str(mid)), ("ay", "tum-aylar"), ("yil", str(yil)),
+                        ("birimler", ""), ("okundu", okundu), ("aciklama", "")]
+                for s in _tablo_json(_post(ctx, sayfa, sayfa + "/datatable", form), sayfa + "/datatable"):
+                    kimlik = _tebligat_id(s)
+                    if kimlik is not None:
+                        if kimlik in gorulen:
+                            continue
+                        gorulen.add(kimlik)
+                    satirlar_ham.append(s)              # ID okunamazsa tekilleştirmeden ekle (kaybolmasın)
         kolonlar = ["Birim", "Gönderim zamanı", "Tebliğ zamanı", "Açıklama", "İndirme"]
         satirlar, acil = [], []
         for s in satirlar_ham:

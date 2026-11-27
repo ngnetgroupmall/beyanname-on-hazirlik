@@ -6,7 +6,7 @@ kod, kurulumda verilen gizli anahtardan hesaplanır (TOTP, RFC 6238). Kullanıc�
 Anahtar düz metin olarak diske YAZILMAZ: giriş bilgileriyle aynı yöntem (giris_kasasi.py, Windows DPAPI, oturum açmış kullanıcıya
 bağlı). Anahtar ve üretilen kod günlüğe yazılmaz. Dosya: %LOCALAPPDATA%\\KdvOnHazirlik\\totp.json
     {"kayitlar": {"luca:<üye no>/<kullanıcı>": {"anahtar_dpapi": "<base64>", "hane": 6, "sure": 30, "ozet": "SHA1"}, ...}}
-Kayıt hesaba göredir (iki ayrı Luca hesabı karışmaz). Kabul edilen anahtar biçimleri: kurulum ekranındaki metin (base32),
+Kayıt hesaba göredir (iki ayrı Luca hesabı karışmaz). E-Mükellef girişi de aynı kasayı kullanır: "emukellef:<e-posta>". Kabul edilen anahtar biçimleri: kurulum ekranındaki metin (base32),
 otpauth://totp/… adresi ve Google Authenticator "Hesapları aktar" QR'ının otpauth-migration://offline?data=… adresi.
 """
 import base64
@@ -86,18 +86,20 @@ def _goc_coz(adres):
     return kayitlar
 
 
-def anahtar_coz(metin, aranan="luca"):
+def anahtar_coz(metin, aranan="luca", hizmet="Luca"):
     """Kullanıcının yapıştırdığı metin -> {"anahtar", "hane", "sure", "ozet"}; geçersizse ValueError.
-    Aktarma adresinde birden çok hesap varsa adı/vereni `aranan`ı içeren TEK kayıt alınır (yoksa ya da birden çoksa hata)."""
+    Aktarma adresinde birden çok hesap varsa adı/vereni `aranan`ı (metin ya da metinler; biri yeter) içeren TEK kayıt alınır
+    (yoksa ya da birden çoksa hata). hizmet: hata metninde görünen ad (Luca, E-Mükellef)."""
     metin = str(metin or "").strip()
+    arananlar = (aranan,) if isinstance(aranan, str) else tuple(aranan)
     kayit = {"anahtar": metin, "hane": 6, "sure": 30, "ozet": "SHA1"}
     if metin.lower().startswith("otpauth-migration://"):
         uygun = [k for k in _goc_coz(metin) if k["tur"] == 2]          # 2 = TOTP (zamana bağlı)
         if len(uygun) > 1:
-            uygun = [k for k in uygun if aranan in (k["ad"] + " " + k["veren"]).lower()]
+            uygun = [k for k in uygun if any(a in (k["ad"] + " " + k["veren"]).lower() for a in arananlar)]
         if len(uygun) != 1:
-            raise ValueError("Aktarılan hesaplar arasında tek bir Luca kaydı bulunamadı; Google Authenticator'da yalnız Luca'yı "
-                             "seçerek dışa aktarın.")
+            raise ValueError(f"Aktarılan hesaplar arasında tek bir {hizmet} kaydı bulunamadı; Google Authenticator'da yalnız "
+                             f"{hizmet} hesabını seçerek dışa aktarın.")
         k = uygun[0]
         kayit = {"anahtar": k["secret"], "hane": k["hane"], "sure": 30, "ozet": k["ozet"]}
     elif metin.lower().startswith("otpauth://"):

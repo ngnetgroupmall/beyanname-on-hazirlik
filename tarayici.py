@@ -18,6 +18,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -402,6 +403,23 @@ class Isci:
                 self._log(f"HATA: {e}")
             except Exception as e:
                 self._log(f"UYARI: firma listesi alınamadı ({str(e).splitlines()[0]}); kayıtlı liste kullanılıyor.")
+
+    def _g_emk_cikis(self):
+        """E-Mükellef oturumunu kapatır: yalnız E-Mükellef çerezleri silinir (Luca oturumuna ve kayıtlı şifreye dokunulmaz)."""
+        if not self._acik_mi():
+            self._tarayici_baslat(False)
+        host = (urlparse(emukellef.ADRES).hostname or "").lower()
+        alanlar = [host] + ([ayar.EMUKELLEF_ALANI] if host.endswith("." + ayar.EMUKELLEF_ALANI) else [])
+        self.ctx.clear_cookies(domain=re.compile("|".join(r"^\.?" + re.escape(a) + "$" for a in alanlar if a)))
+        for s in self._acik_sayfalar():             # açık E-Mükellef sekmesi eski oturumun sayfasında kalmasın
+            if (urlparse(s.url).hostname or "").lower() == host:
+                try:
+                    s.goto(emukellef.YONETIM + "giris", timeout=30_000)
+                except Exception:
+                    pass
+        self.liste_alindi = False                   # yeniden girişte firma listesi tekrar alınsın
+        self._g_giris_kontrol()
+        self._log("E-Mükellef oturumu kapatıldı." if not self.oturum else "UYARI: E-Mükellef çıkışı tamamlanamadı; oturum hâlâ açık.")
 
     # ------------------------------------------------------------ program içinden giriş (tarayıcı arka plandayken)
     # Program captcha ÇÖZMEZ: resmi kullanıcıya gösterir, kullanıcının yazdığını forma yazar. Şifre/kodlar günlüğe yazılmaz.
@@ -1403,6 +1421,8 @@ class Isci:
             bilgi["mesaj"] = str(e)
         except Exception as e:
             bilgi["mesaj"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:400]
+            if isinstance(e, firma_bilgi.KartYapisi):       # tanı: sayfanın yapısı (değer içermez) ayrıntı günlüğüne
+                self._olay("ayrinti", "Mükellef kartı yapısı (değer içermez): " + e.yapi)
         if bilgi["durum"] != "tamam":
             self._log(f"HATA: firma bilgileri alınamadı: {bilgi['mesaj']}")
         return bilgi

@@ -620,9 +620,10 @@ class AktarPenceresi(tk.Toplevel):
 class TotpPenceresi(tk.Toplevel):
     """Bir hesabın Authenticator anahtarını tanımlar ya da siler (totp_kasasi.py). Anahtar maskeli yazılır; günlüğe yazılmaz."""
 
-    def __init__(self, ust, ad, hesap_yazisi):
+    def __init__(self, ust, ad, hesap_yazisi, hizmet="Luca", aranan="luca"):
         super().__init__(ust)
         self.ad, self.degisti = ad, False
+        self.hizmet, self.aranan = hizmet, aranan
         self.title("Authenticator anahtarı")
         self.resizable(False, False)
         self.configure(bg=R["kart"])
@@ -632,7 +633,7 @@ class TotpPenceresi(tk.Toplevel):
         tanimli = totp_kasasi.oku(ad) is not None
         tk.Label(ana, text=f"Hesap: {hesap_yazisi}\n"
                            + ("Bu hesap için anahtar TANIMLI; yenisini yazarsanız eskisinin yerine geçer.\n\n" if tanimli else "\n")
-                           + "Luca'da iki aşamalı doğrulamayı Authenticator ile kurarken gösterilen anahtarı (\"kodu elle gir\") ya da "
+                           + f"{hizmet} hesabında iki aşamalı doğrulamayı Authenticator ile kurarken gösterilen anahtarı (\"kodu elle gir\") ya da "
                              "Google Authenticator'ın \"Hesapları aktar\" adresini (otpauth-migration://…) buraya yapıştırın. "
                              "Program doğrulama kodunu bu anahtardan üretir ve girişte kendisi yazar; telefonunuzdaki uygulama "
                              "çalışmaya devam eder.\n\nAnahtar bu bilgisayarda, Windows hesabınıza bağlı şifreli saklanır.",
@@ -657,7 +658,7 @@ class TotpPenceresi(tk.Toplevel):
 
     def _kaydet(self):
         try:
-            kayit = totp_kasasi.anahtar_coz(self.kutu.get())
+            kayit = totp_kasasi.anahtar_coz(self.kutu.get(), aranan=self.aranan, hizmet=self.hizmet)
         except ValueError as e:
             self.mesaj.configure(text=str(e))
             return
@@ -1025,6 +1026,11 @@ class GirisPenceresi(tk.Toplevel):
         self.b_elle = tk.Label(alt, text="Tarayıcıda elle giriş yap", bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 9, "underline"))
         self.b_elle.pack(side="left")
         self.b_elle.bind("<Button-1>", lambda e: self._elle())
+        b_totp = tk.Label(alt, text="Authenticator anahtarı", bg=R["kart"], fg=R["mavi"], cursor="hand2", font=(YAZI, 9, "underline"))
+        b_totp.pack(side="left", padx=(14, 0))
+        b_totp.bind("<Button-1>", lambda e: self._totp_tikla())
+        # Authenticator (kullanıcı kararı 27.11.2026): hesabın anahtarı tanımlıysa doğrulama kodunu program üretir (pencere başına TEK deneme)
+        self.totp_kul, self.totp_denendi, self.totp_is = None, False, None
         self.sakla = tk.BooleanVar(value=True)
         self.kul = self.sifre = self.kod = self.dogrulama = None
         self._adim1()
@@ -1096,6 +1102,7 @@ class GirisPenceresi(tk.Toplevel):
         """İşçiden gelen captcha resmi (PNG). Program resmi yalnız gösterir."""
         if self.dogrulama is not None:              # 2. adımdayken form başa döndü
             self.dogrulama = None
+            self._totp_iptal()
             self._adim1()
         try:
             self.resim = tk.PhotoImage(data=base64.b64encode(png))
@@ -1121,6 +1128,7 @@ class GirisPenceresi(tk.Toplevel):
             self.mesaj.configure(text="E-posta, şifre ve güvenlik kodunu yazın.", fg=R["kirmizi"])
             return
         self.bekleyen = (kul, sifre, self.sakla.get())
+        self.totp_kul = kul                         # doğrulama adımında Authenticator anahtarı bu hesaba göre aranır
         self.bekle(True, "Giriş yapılıyor…")
         self.uyg.isci.gonder("giris_yap", kul_adi=kul, sifre=sifre, captcha=kod)
 
@@ -1141,6 +1149,62 @@ class GirisPenceresi(tk.Toplevel):
         self.b_yenile = None
         self.bekle(False, "")
         self.dogrulama.focus_set()
+        self._totp_gonder()                         # anahtar tanımlıysa kodu program yazar (bir kez); kabul edilmezse kullanıcı yazar
+
+    # ---- Authenticator (TOTP)
+    @staticmethod
+    def _totp_adi(kul):
+        return totp_kasasi.hesap_adi("emukellef", kul)
+
+    def _totp_iptal(self):
+        if self.totp_is is not None:
+            try:
+                self.after_cancel(self.totp_is)
+            except tk.TclError:
+                pass
+            self.totp_is = None
+
+    def _totp_tikla(self):
+        if self.bekliyor:
+            return
+        if self.dogrulama is not None:
+            kul = self.totp_kul
+        elif self.duzenle and self.kul is not None:
+            kul = self.kul.get().strip()
+        else:
+            kul = self.kayitli_kul
+        if not kul:
+            self.mesaj.configure(text="Önce e-posta adresini yazın.", fg=R["kirmizi"])
+            return
+        p = TotpPenceresi(self, self._totp_adi(kul), f"E-Mükellef {eposta_maske(kul)}", hizmet="E-Mükellef",
+                          aranan=("mükellef", "mukellef"))
+        self.wait_window(p)
+        try:
+            self.grab_set()
+        except tk.TclError:
+            return
+        if p.degisti and self.dogrulama is not None:
+            self.totp_denendi = False               # kod adımında tanımlandı: yeni anahtarla bir kez denenir
+            self._totp_gonder()
+
+    def _totp_gonder(self):
+        """Authenticator kodunu kayıtlı anahtardan üretip gönderir (pencere başına TEK deneme; anahtar ve kod günlüğe yazılmaz)."""
+        if self.totp_denendi or self.dogrulama is None or not self.totp_kul or self.bekliyor:
+            return
+        kayit = totp_kasasi.oku(self._totp_adi(self.totp_kul))
+        if kayit is None:
+            return
+        self.totp_denendi = True                    # zamanlayıcıdan ÖNCE: form yenilense de ikinci kez denenmez
+        self.bekle(True, "Authenticator kodu gönderiliyor…")
+
+        def yap():
+            self.totp_is = None
+            try:
+                self.uyg.isci.gonder("giris_kod", kod=totp_kasasi.kod(kayit))
+            except Exception:
+                self.bekle(False, "Authenticator kodu üretilemedi; kodu telefonunuzdan yazın.")
+        kalan = totp_kasasi.kalan(kayit)            # süresi bitmek üzere olan kod yolda geçersiz kalmasın: yenisi beklenir
+        self.totp_is = self.after(int((kalan + 1) * 1000) if kalan < 3 else 50, yap)
 
     def _dogrula(self):
         kod = self.dogrulama.get().strip()
@@ -1190,6 +1254,7 @@ class GirisPenceresi(tk.Toplevel):
         self.kapat()
 
     def kapat(self):
+        self._totp_iptal()
         self.uyg.giris_p = None
         try:
             self.grab_release()
@@ -1625,6 +1690,9 @@ class Uygulama:
         ofis = emukellef.ADRES.replace("https://", "").removesuffix("." + ayar.EMUKELLEF_ALANI)
         menu.add_command(label=f"Kayıt klasörü: {yol}   —   değiştir…", command=self._kok_penceresi)
         menu.add_command(label=f"E-Mükellef adresi: {ofis}   —   değiştir…", command=self._adres_degistir)
+        menu.add_command(label="E-Mükellef Authenticator anahtarı…", command=self._emk_totp)
+        menu.add_command(label="E-Mükellef oturumunu kapat (çıkış)", command=self._emk_cikis,
+                         state="normal" if self.emk is True else "disabled")
         menu.add_separator()
         menu.add_command(label="Kayıt klasörünü aç", command=lambda: self._ac(self.kok_yolu),
                          state="normal" if self._kok_var() else "disabled")
@@ -1633,6 +1701,31 @@ class Uygulama:
             menu.tk_popup(self.b_ayar.winfo_rootx(), self.b_ayar.winfo_rooty() + self.b_ayar.winfo_height() + 2)
         finally:
             menu.grab_release()
+
+    def _emk_cikis(self):
+        """E-Mükellef oturumunu kapatır (yalnız çerezler; kayıtlı şifre ve Luca oturumu kalır). Çıkınca giriş penceresi kendiliğinden açılır."""
+        def mesgul():
+            return bool(self.calisiyor or self.kosu or self.beyan_kosu or self.toplu)
+        if mesgul():
+            messagebox.showinfo("E-Mükellef çıkışı", "Bir işlem sürerken çıkış yapılamaz; bitince yeniden deneyin.", parent=self.kok)
+            return
+        if not messagebox.askyesno("E-Mükellef çıkışı", "E-Mükellef oturumu kapatılsın mı?\n\nKayıtlı e-posta/şifre ve Luca oturumu "
+                                   "silinmez; yeniden giriş için güvenlik kodu istenir.", default="no", parent=self.kok):
+            return
+        if mesgul():                                # onay beklenirken iş başlamış olabilir
+            return
+        self.giris_ertelendi = False
+        self.isci.gonder("emk_cikis")
+
+    def _emk_totp(self):
+        """Oturum açıkken de (giriş penceresi açılmadan) kayıtlı E-Mükellef hesabının Authenticator anahtarını tanımlar/siler."""
+        kul = giris_kasasi.oku()[0]
+        if not kul:
+            messagebox.showinfo("Authenticator anahtarı", "Kayıtlı E-Mükellef hesabı yok. Anahtarı, giriş penceresindeki "
+                                "'Authenticator anahtarı' bağlantısından tanımlayın.", parent=self.kok)
+            return
+        TotpPenceresi(self.kok, GirisPenceresi._totp_adi(kul), f"E-Mükellef {eposta_maske(kul)}", hizmet="E-Mükellef",
+                      aranan=("mükellef", "mukellef"))
 
     def _adres_degistir(self):
         """E-Mükellef adresini (ofisi) değiştirir. Adres çalışırken değişmez: ayar yazılır ve program kapanır.

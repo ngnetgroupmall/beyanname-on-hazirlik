@@ -147,6 +147,23 @@ def _kart_coz(html):
     return k
 
 
+class KartYapisi(RuntimeError):
+    """Mükellef kartı okunamadı; .yapi = tanı için sayfanın DEĞER İÇERMEYEN yapısı (alan adları, bölümler, başlık/etiket metinleri)."""
+
+    def __init__(self, mesaj, html):
+        super().__init__(mesaj)
+        def bul(desen, n=40):
+            return ",".join(dict.fromkeys(m.strip()[:40] for m in re.findall(desen, html, re.I | re.S) if m.strip()))[:n * 20]
+        metin = " | ".join(dict.fromkeys(
+            re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", m))).strip()[:60]
+            for m in re.findall(r"<(?:h[1-6]|label|button|title)\b[^>]*>(.*?)</(?:h[1-6]|label|button|title)>", html, re.I | re.S)))
+        self.yapi = (f"uzunluk={len(html)}; alanlar={bul(r'<(?:input|select|textarea)\b[^>]*\bname=[\"\x27]([^\"\x27]+)')}; "
+                     f"bolumler={bul(r'<div\b[^>]*\bid=[\"\x27]((?:collapse|tab)-[^\"\x27]+)')}; "
+                     f"formlar={bul(r'<form\b[^>]*\baction=[\"\x27]([^\"\x27?]+)')}; metinler={metin[:700]}")
+        if len(html) < 6000 and not re.search(r"<(?:input|select|textarea)\b", html, re.I):    # alansız kısa kabuk: tamamı (değer yok)
+            self.yapi += "; ham=" + re.sub(r"\s+", " ", html)
+
+
 def kart_bilgileri(html):
     """Mükellef kartından firma bilgileri (şifre alanları atlanır)."""
     k = _kart_coz(html)
@@ -163,7 +180,7 @@ def kart_bilgileri(html):
         elif a["ad"] not in alan:
             alan[a["ad"]] = a["deger"]
     if not alan.get("vn") or not vergi:
-        raise RuntimeError("Mükellef kartı beklenen yapıda değil (vergi numarası / vergi türleri okunamadı).")
+        raise KartYapisi("Mükellef kartı beklenen yapıda değil (vergi numarası / vergi türleri okunamadı).", html)
     kimlik = {ad: str(alan.get(k_) or "").strip() for k_, ad in _KIMLIK}
     kimlik["Vergi dairesi"] = re.sub(r"\s*\(\d+\)\s*$", "", kimlik["Vergi dairesi"]) if kimlik["Vergi dairesi"] != "Seçiniz" else ""
     iletisim = []
@@ -236,6 +253,21 @@ def _kart_html(ctx, mid, sekme=None):
     return h
 
 
+def _kart(ctx, mid):
+    """Kart bilgileri. E-Mükellef kartın yerine kırmızı bir uyarı gösteriyorsa (27.11.2026: giriş yapan kullanıcının 'mükellef
+    bilgilerini düzenleme' yetkisi yoksa kart alansız gelir) o uyarı hata olarak verilir."""
+    h = _kart_html(ctx, mid)
+    try:
+        return kart_bilgileri(h)
+    except KartYapisi:
+        m = re.search(r'<div[^>]*class="[^"]*alert-danger[^"]*"[^>]*>(.*?)</div>', h, re.I | re.S)
+        uyari = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", m.group(1)))).strip() if m else ""
+        if uyari:
+            raise RuntimeError(f"E-Mükellef mükellef kartını açmadı: \"{uyari[:200]}\" E-Mükellef'te giriş yapılan kullanıcının "
+                               "yetkisini kontrol edin.")
+        raise
+
+
 def _no(v):
     return re.sub(r"\D", "", str(v or ""))
 
@@ -243,7 +275,7 @@ def _no(v):
 def topla(ctx, mid, beklenen_vkn="", gib=True, iptal=lambda: False):
     """Mükellef kartı önce okunup VKN doğrulanır (yanlış eşlemede başka mükellefin kartı GİB'den güncellenmesin); sonra GİB sorgusu
     (gib=True), kart ve ortaklık sekmesi yeniden okunur -> bilgi sözlüğü."""
-    once = kart_bilgileri(_kart_html(ctx, mid))
+    once = _kart(ctx, mid)
     kv, fv = _no(once["kimlik"].get("VKN / TCKN")), _no(beklenen_vkn)
     if fv and kv != fv:
         raise RuntimeError(f"E-Mükellef'teki mükellef kartının numarası ({kv or 'boş'}) firmanınkiyle ({fv}) aynı değil. GİB sorgusu yapılmadı.")
@@ -252,7 +284,7 @@ def topla(ctx, mid, beklenen_vkn="", gib=True, iptal=lambda: False):
     sorgu = gib_sorgula(ctx, mid) if gib else []
     if iptal():
         raise RuntimeError("Durduruldu (GİB sorgusu yapılmıştı; dosya yazılmadı).")
-    b = kart_bilgileri(_kart_html(ctx, mid))
+    b = _kart(ctx, mid)
     if fv and _no(b["kimlik"].get("VKN / TCKN")) != fv:
         raise RuntimeError("GİB sorgusundan sonra mükellef kartının numarası değişti; kaydedilmedi.")
     b.update(ortaklik_bilgileri(_kart_html(ctx, mid, "sirket-ortaklik-ve-yoneticilik-bilgisi")))
