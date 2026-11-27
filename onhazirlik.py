@@ -738,7 +738,7 @@ class LucaGirisPenceresi(tk.Toplevel):
         return totp_kasasi.hesap_adi("luca", musteri, kullanici)
 
     def _alt_ciz(self):
-        self.aciklama.configure(text="Luca sorguları için giriş gerekir. Giriş, açılan tarayıcı penceresinde program tarafından yapılır."
+        self.aciklama.configure(text="Luca sorguları için giriş gerekir. Girişi program arka planda yapar; tarayıcı penceresi görünmez."
                                 if self.ici else "Luca sorguları için giriş gerekir.")
         for w in self.alt.winfo_children():
             w.destroy()
@@ -829,6 +829,8 @@ class LucaGirisPenceresi(tk.Toplevel):
         tk.Label(g, text=mesaj or "Luca güvenlik kodu istiyor.", bg=R["kart"], fg=R["yazi"], font=(YAZI, 9), wraplength=520,
                  justify="left").pack(anchor="w", pady=(0, 6))
         try:
+            if not png:                             # görüntü alınamadı (kod adımı yine de sürer)
+                raise tk.TclError("görüntü yok")
             self.resim = tk.PhotoImage(data=base64.b64encode(png))
             if self.resim.width() > 640:
                 self.resim = self.resim.subsample(2)
@@ -916,7 +918,7 @@ class LucaGirisPenceresi(tk.Toplevel):
             self.mesaj.configure(text="Üye no, kullanıcı adı ve parolayı yazın.", fg=R["kirmizi"])
             return
         self.bekleyen = (m, k, pr, self.sakla.get())
-        self.bekle(True, "Luca'ya giriş yapılıyor… (yarım dakika kadar sürebilir)")
+        self.bekle(True, "Luca'ya giriş yapılıyor…")
         self.uyg.isci.gonder("luca_giris", musteri_no=m, kullanici=k, parola=pr, gorunur=self.gorunur_mod)
 
     def bekle(self, bekliyor, mesaj=""):

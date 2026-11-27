@@ -136,6 +136,154 @@ def _ekran_disi_konum():
         return -5000, 0
 
 
+# ---------------------------------------------------------------- ekran dışı Chrome: görev çubuğu ve odak (yalnız Windows)
+# Luca gizli (headless) tarayıcıda açılmadığından gerçek bir Chrome penceresi ekranın dışında tutulur (bkz. _tarayici_baslat).
+# 27.11.2026: o pencere açılırken öne geçiyor (klavye odağını alıyor) ve görev çubuğunda düğmesi çıkıyordu. Aşağıdakiler yalnız
+# BU PROGRAMIN açtığı Chrome'un, ekranın dışında duran pencerelerine dokunur.
+_PENCERE_SABIT_JS = """(() => {
+    // Luca sayfaları yüklenince pencereyi (0,0)'a taşıyıp tam ekran yapıyor (onload: moveTo + resizeTo); ekran dışındaki pencere
+    // böyle ekrana geri geliyordu. Yalnız Luca'nın üst belgelerinde, yalnız pencereyi taşıyan/boyutlandıran çağrılar etkisizdir.
+    try {
+        if (window.top !== window) return;
+        const luca = h => /(^|\\.)luca\\.com\\.tr$/.test(h || '');
+        let bizim = luca(location.hostname);
+        if (!bizim && !location.hostname && window.opener) {
+            // Luca'nın window.open ile açtığı pencere önce boş (about:blank) doğar; aynı kökene gidince pencere nesnesi (ve bu
+            // betiğin etkisi) korunur, betik yeniden çalışmaz. O yüzden boş pencerede açan sayfaya bakılır.
+            try { bizim = luca(window.opener.location.hostname); } catch (e) {}
+        }
+        if (!bizim) return;
+        for (const ad of ['moveTo', 'moveBy', 'resizeTo', 'resizeBy']) window[ad] = function () {};
+    } catch (e) {}
+})();"""
+_U32 = []
+
+
+def _user32():
+    if not _U32:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.GetForegroundWindow.restype = wintypes.HWND
+        u.SetForegroundWindow.argtypes = u.IsWindow.argtypes = u.IsWindowVisible.argtypes = [wintypes.HWND]
+        u.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.GetWindowLongW.restype = ctypes.c_long
+        u.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        _U32.append(u)
+    return _U32[0]
+
+
+def _surec_agaci():
+    """Çalışan süreçler: {pid: (üst süreç pid, exe adı küçük harf)} (Toolhelp32); alınamazsa boş sözlük."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Kayit(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    k.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k.Process32FirstW.argtypes = k.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(Kayit)]
+    k.Process32FirstW.restype = k.Process32NextW.restype = wintypes.BOOL
+    k.CloseHandle.argtypes = [ctypes.c_void_p]
+    h = k.CreateToolhelp32Snapshot(0x00000002, 0)   # TH32CS_SNAPPROCESS
+    if not h or h == ctypes.c_void_p(-1).value:
+        return {}
+    agac = {}
+    try:
+        e = Kayit()
+        e.dwSize = ctypes.sizeof(Kayit)
+        var = k.Process32FirstW(h, ctypes.byref(e))
+        while var:
+            agac[e.th32ProcessID] = (e.th32ParentProcessID, e.szExeFile.lower())
+            var = k.Process32NextW(h, ctypes.byref(e))
+    finally:
+        k.CloseHandle(h)
+    return agac
+
+
+def _chrome_pencereleri():
+    """Bu programın açtığı Chrome'un (atası bu süreç olan chrome.exe) görünür üst düzey pencereleri: {hwnd: pencerenin sağ kenarı}."""
+    import ctypes
+    from ctypes import wintypes
+    agac, u, ben, bulunan = _surec_agaci(), _user32(), os.getpid(), {}
+
+    def bizim(pid):
+        if agac.get(pid, (0, ""))[1] != "chrome.exe":
+            return False
+        for _ in range(8):                          # chrome.exe -> node.exe (Playwright sürücüsü) -> bu program
+            pid = agac.get(pid, (0, ""))[0]
+            if pid == ben:
+                return True
+            if not pid:
+                return False
+        return False
+
+    def bak(h, _):
+        if u.IsWindowVisible(h):
+            sinif = ctypes.create_unicode_buffer(64)
+            u.GetClassNameW(h, sinif, 64)
+            if sinif.value == "Chrome_WidgetWin_1":
+                pid = wintypes.DWORD()
+                u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+                if bizim(pid.value):
+                    r = wintypes.RECT()
+                    if u.GetWindowRect(h, ctypes.byref(r)):
+                        bulunan[h] = r.right
+        return True
+    u.EnumWindows(ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(bak), 0)
+    return bulunan
+
+
+def _on_pencere():
+    """Şu an önde olan pencere (bu programın Chrome'u değilse); Windows dışında / bulunamazsa None."""
+    if os.name != "nt":
+        return None
+    try:
+        h = _user32().GetForegroundWindow()
+        return h if h and h not in _chrome_pencereleri() else None
+    except Exception:
+        return None
+
+
+def _arka_plana_al(onceki=None):
+    """Ekranın DIŞINDA duran Chrome pencerelerini görev çubuğundan ve Alt+Tab'dan kaldırır, tıklanınca öne geçmez yapar
+    (WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE; stil değişikliği görev çubuğuna gizle/göster ile yansır). Pencerelerden biri öne geçmişse
+    odağı `onceki` pencereye geri verir; kullanıcı başka bir pencereye geçtiyse odağa dokunulmaz.
+    -> (stili değiştirilen pencere sayısı, odak: True verildi | False verilemedi | None gerekmedi)."""
+    if os.name != "nt":
+        return 0, None
+    u = _user32()
+    sanal_sol = u.GetSystemMetrics(76)              # SM_XVIRTUALSCREEN; GetWindowRect ile aynı koordinat sistemi
+    pencereler = _chrome_pencereleri()
+    onde_bizim = u.GetForegroundWindow() in pencereler          # gizlemeden ÖNCE bakılır (gizlenen pencere önden düşer)
+    n = 0
+    for h, sag in pencereler.items():
+        if sag > sanal_sol:                         # ekranda görünen pencereye dokunulmaz
+            continue
+        ex = u.GetWindowLongW(h, -20)               # GWL_EXSTYLE
+        if not ex or ex & 0x80:                     # okunamadı ya da zaten araç penceresi
+            continue
+        u.ShowWindow(h, 0)                          # SW_HIDE
+        try:
+            u.SetWindowLongW(h, -20, (ex | 0x80 | 0x08000000) & ~0x40000)       # +TOOLWINDOW +NOACTIVATE -APPWINDOW
+        finally:
+            u.ShowWindow(h, 4)                      # SW_SHOWNOACTIVATE: stil yazılamasa da pencere geri gösterilir
+        if u.GetWindowLongW(h, -20) & 0x80:
+            n += 1
+    geri = None
+    if onde_bizim and onceki and u.IsWindow(onceki) and u.GetForegroundWindow() != onceki:
+        geri = bool(u.SetForegroundWindow(onceki))
+    return n, geri
+
+
 class Isci:
     FORM = "#giris_form_load"                       # E-Mükellef giriş formunun yüklendiği kutu
 
@@ -146,6 +294,8 @@ class Isci:
         self.ctx = None
         self.gorunur = False                        # tarayıcı penceresi görünür mü (varsayılan: arka planda)
         self.ekran_disi = False                     # gerçek pencere ama ekranın dışında (Luca için; kullanıcı görmez)
+        self._tasinan = set()                       # ekran dışına taşınmış Chrome pencere numaraları (CDP windowId)
+        self._on, self._on_zaman = None, 0.0        # Chrome öne geçmeden önce öndeki pencere ve kaydedildiği an (odağı geri vermek için)
         self.oturum = None                          # son bilinen E-Mükellef giriş durumu
         self.luca = None                            # son bilinen Luca oturumu (None: bakılmadı)
         self.luca_liste_alindi = False
@@ -232,6 +382,7 @@ class Isci:
         PROFIL.mkdir(parents=True, exist_ok=True)
         try:
             if ekran_disi and not gorunur:
+                self._on_kaydet()                   # Chrome açılırken öne geçer: odak sonra bu pencereye geri verilir
                 sol, ust = _ekran_disi_konum()
                 ctx = self.p.chromium.launch_persistent_context(
                     str(PROFIL), channel="chrome", headless=False, viewport={"width": 1280, "height": 900},
@@ -253,34 +404,21 @@ class Isci:
             if self.ctx is ctx:
                 self.ctx = None
         ctx.on("close", kapandi)
-        if ekran_disi and not gorunur:              # Luca'nın window.open ile açtığı pencereler de ekran dışına taşınır
-            tasinan = set()
+        self.ctx, self.gorunur, self.ekran_disi = ctx, gorunur, bool(ekran_disi and not gorunur)
+        if self.ekran_disi:                         # Luca'nın window.open ile açtığı pencereler de ekran dışına taşınır
+            self._tasinan = set()
+            try:
+                ctx.add_init_script(_PENCERE_SABIT_JS)          # Luca sayfaları pencereyi ekrana geri taşıyamasın
+            except Exception as e:
+                self._olay("ayrinti", f"Pencere sabitleme betiği eklenemedi: {type(e).__name__}")
 
-            def disari(pg):
-                s = None
-                try:
-                    s = ctx.new_cdp_session(pg)
-                    w = s.send("Browser.getWindowForTarget")["windowId"]
-                    if w in tasinan:
-                        return
-                    sol, ust = _ekran_disi_konum()
-                    if s.send("Browser.getWindowBounds", {"windowId": w})["bounds"].get("windowState") != "normal":
-                        s.send("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}})
-                    s.send("Browser.setWindowBounds", {"windowId": w, "bounds": {"left": sol, "top": ust, "width": 1280, "height": 900}})
-                    tasinan.add(w)
-                    b = s.send("Browser.getWindowBounds", {"windowId": w})["bounds"]
-                    self._olay("ayrinti", f"Ekran dışı pencere {w}: sol={b.get('left')} üst={b.get('top')} durum={b.get('windowState')}")
-                except Exception as e:
-                    self._olay("ayrinti", f"Pencere ekran dışına taşınamadı: {type(e).__name__}: {str(e)[:120]}")
-                finally:
-                    if s is not None:
-                        try:
-                            s.detach()
-                        except Exception:
-                            pass
-            ctx.on("page", disari)
+            def yeni_pencere(pg):
+                self._ekran_disina(pg, ctx)
+                self._arka_planda_tut()
+            ctx.on("page", yeni_pencere)
             for pg in list(ctx.pages):
-                disari(pg)
+                self._ekran_disina(pg, ctx)
+            self._arka_planda_tut()
         if gorunur:                                 # teşhis (27.11.2026): Luca paket açılışı isteği, elle ve otomatik girişte karşılaştırılır
             def sso(r):
                 try:
@@ -289,7 +427,61 @@ class Isci:
                 except Exception:
                     pass
             ctx.on("response", sso)
-        self.ctx, self.gorunur, self.ekran_disi = ctx, gorunur, bool(ekran_disi and not gorunur)
+
+    # ---- ekran dışı pencere: yerinde, görev çubuğunun dışında ve odaksız kalsın
+    def _ekran_disina(self, pg, ctx=None):
+        """Sayfanın penceresi ekran dışındaki yerinde değilse oraya taşır (yeni açılan ya da ekrana geri gelmiş pencere). -> taşındı mı"""
+        ctx, s = ctx or self.ctx, None
+        try:
+            s = ctx.new_cdp_session(pg)
+            w = s.send("Browser.getWindowForTarget")
+            no, b = w["windowId"], w.get("bounds") or {}
+            sol, ust = _ekran_disi_konum()
+            if b.get("windowState", "normal") == "normal" and b.get("left") == sol and b.get("top") == ust:
+                return False
+            if b.get("windowState", "normal") != "normal":
+                s.send("Browser.setWindowBounds", {"windowId": no, "bounds": {"windowState": "normal"}})
+            s.send("Browser.setWindowBounds", {"windowId": no, "bounds": {"left": sol, "top": ust, "width": 1280, "height": 900}})
+            yeni = s.send("Browser.getWindowBounds", {"windowId": no})["bounds"]
+            self._olay("ayrinti", f"Ekran dışı pencere {no}: sol={yeni.get('left')} üst={yeni.get('top')} durum={yeni.get('windowState')}"
+                       + (f" (ekrana dönmüştü: sol={b.get('left')} üst={b.get('top')})" if no in self._tasinan else ""))
+            self._tasinan.add(no)
+            return True
+        except Exception as e:
+            self._olay("ayrinti", f"Pencere ekran dışına taşınamadı: {type(e).__name__}: {str(e)[:120]}")
+            return False
+        finally:
+            if s is not None:
+                try:
+                    s.detach()
+                except Exception:
+                    pass
+
+    def _on_kaydet(self):
+        """Şu an öndeki pencereyi (bu programın Chrome'u değilse) hatırlar; ekran dışı Chrome öne geçerse odak ona geri verilir."""
+        h = _on_pencere()
+        if h:
+            self._on, self._on_zaman = h, time.time()
+
+    def _arka_planda_tut(self):
+        """Ekran dışı modda Chrome pencereleri görev çubuğunda görünmez; öne geçtiyse odak az önce (30 sn) kaydedilen pencereye döner."""
+        if not self.ekran_disi:
+            return
+        try:
+            n, geri = _arka_plana_al(self._on if time.time() - self._on_zaman < 30 else None)
+            if n or geri is not None:
+                self._olay("ayrinti", f"Ekran dışı Chrome: {n} pencere görev çubuğundan kaldırıldı; odak "
+                           + {True: "önceki pencereye geri verildi", False: "geri verilemedi", None: "değişmedi"}[geri])
+        except Exception as e:
+            self._olay("ayrinti", f"Ekran dışı Chrome arka plana alınamadı: {type(e).__name__}: {str(e)[:120]}")
+
+    def _ekran_disi_denetle(self):
+        """Ekran dışı modda tüm pencereleri yeniden denetler (Luca paketi açıldıktan sonra ve arka plan denetiminde)."""
+        if not self.ekran_disi or self.ctx is None:
+            return
+        for pg in self._acik_sayfalar():
+            self._ekran_disina(pg)
+        self._arka_planda_tut()
 
     def _acik_sayfalar(self):
         return [p for p in self.ctx.pages if not p.is_closed()] if self.ctx else []
@@ -389,6 +581,7 @@ class Isci:
         degisti = emk != self.oturum
         self.oturum = emk
         self._luca_guncelle(sessiz=sessiz)
+        self._ekran_disi_denetle()                  # yedek: ekran dışı pencere ekrana dönmüş / görev çubuğuna çıkmışsa düzeltilir
         self._durum_bildir()
         if not sessiz or degisti:
             self._log(f"E-Mükellef: {'giriş yapıldı' if emk else 'GİRİŞ GEREKLİ'}")
@@ -438,10 +631,13 @@ class Isci:
         """Önceki girişten kalan ortak ekran açıksa paketi yeniden açmayı dener (tek kısa deneme); olmazsa False."""
         try:
             self._log("Luca ortak ekranı açık; Luca Mali Müşavir Paketi yeniden açılıyor…")
+            self._on_kaydet()                       # paket yeni pencerede açılır ve öne geçer: odak geri verilecek pencere
             luca.uygulama_ac(self.ctx, deneme_sayisi=1, bekle_sn=20, gunluk=self._log)
             return self._luca_kontrol()
         except Exception:
             return False
+        finally:
+            self._ekran_disi_denetle()
 
     def _g_luca_giris(self, musteri_no, kullanici, parola, kod=None, gorunur=False):
         """gorunur=False (27.11.2026): giriş önce arka plandaki (gizli) tarayıcıda denenir — 19.11'deki 'gizli tarayıcıda paket 500'
@@ -469,6 +665,7 @@ class Isci:
                 else:
                     asama = "kod gönderme"
                     durum, mesaj = luca.giris_kod(self.ctx, musteri_no, kullanici, parola, kod)
+                self._olay("ayrinti", f"{time.strftime('%d.%m.%Y %H:%M:%S')} Luca giriş süreleri ({asama}): {luca.sure_ozeti() or '-'}")
                 if durum == "dogrulama":            # kullanıcıdan kod beklenir
                     self._log("Luca girişi: Luca güvenlik/doğrulama kodu istiyor.")
                     self._olay("ayrinti", "Luca doğrulama sayfası yapısı (değer içermez): " + str(mesaj.get("yapi", "")))
@@ -481,7 +678,10 @@ class Isci:
                 if durum == "tamam":
                     asama = "Luca paketini açma (giriş kabul edildi)"
                     self._log("Luca girişi kabul edildi; Luca Mali Müşavir Paketi açılıyor…")
+                    self._on_kaydet()               # paket yeni pencerede açılır ve öne geçer: odak geri verilecek pencere
+                    t_paket = time.perf_counter()
                     luca.uygulama_ac(self.ctx, gunluk=self._log)
+                    self._olay("ayrinti", f"{time.strftime('%d.%m.%Y %H:%M:%S')} Luca paketi {time.perf_counter() - t_paket:.1f} sn'de açıldı.")
             self._log("Luca girişi: " + {"tamam": "başarılı.", "hata": "kabul edilmedi.", "belirsiz": "sonuç anlaşılamadı."}[durum])
             if durum == "belirsiz":                 # tanı (giriş bilgisi içermez) günlük dosyasına
                 self._olay("ayrinti", "Luca giriş tanısı: " + str(mesaj))
@@ -502,6 +702,8 @@ class Isci:
                 self._log(f"HATA: Luca girişi tamamlanamadı (aşama: {asama}): {m}")
             self._olay("luca_giris_sonuc", {"durum": "hata", "mesaj": f"Luca girişi yapılamadı (aşama: {asama}): {m}",
                                             "gizli_basarisiz": gizli_basarisiz})
+        finally:
+            self._ekran_disi_denetle()              # paket penceresi yerinde, görev çubuğunun dışında ve odaksız kalsın
 
     def _captcha_al(self, sayfa):
         sayfa.wait_for_selector("#captcha-image", state="visible", timeout=30_000)

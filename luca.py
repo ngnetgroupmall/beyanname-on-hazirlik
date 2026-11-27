@@ -174,19 +174,48 @@ def _yapi_ozeti(yapi):
             + "; çerçeveler=" + ", ".join(yapi["cerceveler"][:4]) + f"; robot={yapi['robot']}")
 
 
+SURELER = []          # son giriş adımlarının süreleri [(ad, sn)] — tanı için (değer içermez); tarayici.py ayrıntı günlüğüne yazar
+
+
+def _sure(ad, t0):
+    """Adımın süresini kaydeder; sonraki adım için yeni başlangıç zamanını döner."""
+    simdi = time.perf_counter()
+    SURELER.append((ad, simdi - t0))
+    return simdi
+
+
+def sure_ozeti():
+    """Son girişin adım süreleri (okununca sıfırlanır)."""
+    ozet = ", ".join(f"{ad} {sn:.1f} sn" for ad, sn in SURELER)
+    del SURELER[:]
+    return ozet
+
+
 def _dogrulama_goruntusu(pg, girdi):
-    """Luca'nın istediği doğrulamanın ekran görüntüsü (PNG): giriş formu; form çok büyükse kod kutusunun çevresi."""
+    """Luca'nın istediği doğrulamanın ekran görüntüsü (PNG): giriş formu; form yoksa/çok büyükse kod kutusunun çevresi; alınamazsa b"".
+    Hiçbir adım uzun beklemez. 27.11.2026: iki aşamalı doğrulama sayfasında 'girisForm' adlı form YOK; zaman aşımı verilmeyen
+    bounding_box() onu 30 sn bekliyordu (her Luca girişi yarım dakika gecikiyordu)."""
     try:
         form = pg.locator("form[name=girisForm]").first
-        kutu = form.bounding_box()
-        if kutu and 150 <= kutu["width"] <= 760 and 80 <= kutu["height"] <= 620:
-            return form.screenshot()
+        if form.count():                            # count() beklemez
+            kutu = form.bounding_box(timeout=1500)
+            if kutu and 150 <= kutu["width"] <= 760 and 80 <= kutu["height"] <= 620:
+                return form.screenshot(timeout=5000)
     except Exception:
         pass
-    k = pg.locator(_girdi_secici(girdi)).first.bounding_box() or {"x": 300, "y": 300, "width": 200, "height": 30}
+    k = None
+    try:
+        k = pg.locator(_girdi_secici(girdi)).first.bounding_box(timeout=1500)
+    except Exception:
+        pass
+    k = k or {"x": 300, "y": 300, "width": 200, "height": 30}
     boyut = pg.viewport_size or {"width": 1280, "height": 900}
     x, y = max(0, k["x"] - 300), max(0, k["y"] - 220)
-    return pg.screenshot(clip={"x": x, "y": y, "width": min(720, boyut["width"] - x), "height": min(340, boyut["height"] - y)})
+    try:
+        return pg.screenshot(clip={"x": x, "y": y, "width": min(720, boyut["width"] - x), "height": min(340, boyut["height"] - y)},
+                             timeout=5000)
+    except Exception:
+        return b""                                  # görüntü alınamadı: kod adımı yine de sürer (arayüz bunu bildirir)
 
 
 def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
@@ -195,6 +224,7 @@ def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
     uyarilar = []
     dinle = lambda d: (uyarilar.append(d.message), d.dismiss())      # noqa: E731  (alert pencereleri)
     pg.on("dialog", dinle)
+    t0 = time.perf_counter()
     try:
         pg.evaluate("() => { window.__kdv_isaret = 1; }")           # sayfanın yeniden yüklendiğini anlamak için
         dugme, dugmeler = _gonder_dugmesi(pg)
@@ -225,7 +255,6 @@ def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
                 return "robot", "Luca bu girişte tarayıcıda robot doğrulaması istiyor; 'Tarayıcıda elle giriş yap' ile girin."
             ek = _ek_girdiler(yapi)
             if ek:                                   # Luca ek doğrulama istiyor (güvenlik kodu / doğrulama kodu)
-                pg.wait_for_timeout(700)             # resim yüklensin
                 mesaj = _ayikla(yapi["metin"], gizli)
                 yerler = [x for x in (mesaj.find("İki aşamalı"), mesaj.find("Captcha"), mesaj.find("Güvenlik"), mesaj.find("doğrulama")) if x >= 0]
                 i = min(yerler) if yerler else 0
@@ -239,7 +268,12 @@ def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
                 iki_asamali = (len(ek) == 1 and "iki asamali dogrulama" in metin_duz and "authenticator" in metin_duz
                                and "captcha" not in (ek[0]["id"] + ek[0]["name"]).lower()
                                and not any("captcha" in (r["src"] + r["id"]).lower() for r in yapi["resimler"]))
-                return "dogrulama", {"resim": _dogrulama_goruntusu(pg, ek[0]), "mesaj": mesaj[i:i + 220], "iki_asamali": iki_asamali,
+                if not iki_asamali:
+                    pg.wait_for_timeout(700)         # güvenlik kodu resmi yüklensin (Authenticator ekranında resim yok)
+                tg = time.perf_counter()
+                resim = _dogrulama_goruntusu(pg, ek[0])
+                _sure("doğrulama görüntüsü", tg)
+                return "dogrulama", {"resim": resim, "mesaj": mesaj[i:i + 220], "iki_asamali": iki_asamali,
                                      "yapi": f"{_yapi_ozeti(yapi)}; kod kutusu={_girdi_secici(ek[0])}; düğmeler: {dugme_ozeti}"}
         tani = ""
         try:
@@ -250,6 +284,7 @@ def _gonder_ve_bekle(pg, gizli, bekle_sn, kod_girdisi=None):
             tani = "sayfa okunamadı"
         return "belirsiz", f"Luca girişinin sonucu anlaşılamadı ({tani}). 'Tarayıcıda elle giriş' ile deneyin."
     finally:
+        _sure("gönderim ve sonuç (toplam)", t0)
         try:
             pg.remove_listener("dialog", dinle)
         except Exception:
@@ -280,6 +315,8 @@ def giris_yap(ctx, musteri_no, kullanici, parola, bekle_sn=45):
     Döner: ('tamam', '') | ('dogrulama', {resim: PNG, mesaj}) | ('robot', mesaj) | ('hata', mesaj) | ('belirsiz', mesaj).
     'dogrulama': Luca ek kod istiyor (iki aşamalı doğrulama kapalıysa güvenlik kodu). Program kodu ÇÖZMEZ; resim kullanıcıya
     gösterilir, yazdığı kod giris_kod() ile gönderilir. Parola ve diğer bilgiler hiçbir yere yazılmaz; hata metninden de ayıklanır."""
+    del SURELER[:]
+    t = time.perf_counter()
     pg = _giris_sayfasi(ctx)
     pg.goto(LUCA_GIRIS, timeout=60_000)
     if urlparse(pg.url).path.split(";")[0] == PORTAL_YOLU:      # oturum zaten açık
@@ -288,7 +325,9 @@ def giris_yap(ctx, musteri_no, kullanici, parola, bekle_sn=45):
         pg.wait_for_selector("#musteriNo", state="visible", timeout=30_000)
     except Exception:
         return "belirsiz", "Luca giriş sayfası beklenen yapıda açılmadı."
+    t = _sure("giriş sayfası", t)
     _bilgileri_yaz(pg, musteri_no, kullanici, parola)
+    _sure("bilgileri yazma", t)
     return _gonder_ve_bekle(pg, (musteri_no, kullanici, parola), bekle_sn)
 
 
@@ -306,8 +345,11 @@ def giris_kod(ctx, musteri_no, kullanici, parola, kod, bekle_sn=45):
         return giris_yap(ctx, musteri_no, kullanici, parola, bekle_sn)
     if not pg.url.startswith(LUCA_GIRIS.split("/LUCASSO/")[0] + "/"):
         raise LucaHatasi("Luca giriş sayfası beklenen adreste değil; kod gönderilmedi.")
+    del SURELER[:]
+    t = time.perf_counter()
     _bilgileri_yaz(pg, musteri_no, kullanici, parola, yalniz_bos=True)
     _klavyeyle_yaz(pg.locator(_girdi_secici(ek[0])).first, kod)
+    _sure("kod yazma", t)
     return _gonder_ve_bekle(pg, (musteri_no, kullanici, parola, kod), bekle_sn, kod_girdisi=_girdi_secici(ek[0]))
 
 
