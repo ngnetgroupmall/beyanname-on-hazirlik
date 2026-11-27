@@ -3266,6 +3266,30 @@ class Uygulama:
         self.beyan_sira = getattr(self.isci, "sira", None)
         self._dugme_guncelle()                      # Başlat -> Durdur (indirme durdurulabilir)
 
+    def _firma_bilgi_guncelle(self):
+        """Pano: seçili firmanın bilgilerini E-Mükellef'te GİB'den sorgulatıp firma klasörüne (Genel\\Firma Bilgileri.md) yazar."""
+        if not self._kok_gerekli():
+            return
+        t = self._secili()
+        if not t:
+            return
+        if self.calisiyor or self.kosu or self.beyan_kosu or self.toplu:
+            self._yaz("Bir işlem sürüyor; bitmesini bekleyin.")
+            return
+        if self.emk is not True and not self.gorunur:
+            self._yaz("E-Mükellef girişi gerekli; giriş yaptıktan sonra yeniden deneyin.")
+            self.giris_ac()
+            return
+        if not t.get("klasor"):
+            t = self._klasor_tanimla(t)
+            if t is None:
+                return
+        firma = {"ad": t["ad"], "klasor": t["klasor"], "emukellef_id": t["id"], "vkn": t.get("vkn", ""), "unvan": t.get("unvan", "")}
+        self.isci.gonder("firma_bilgi", firma=firma)
+        self.beyan_kosu = True                      # görev bitene kadar başka işlem başlamasın (Durdur yalnız sırayı keser)
+        self.beyan_sira = getattr(self.isci, "sira", None)
+        self._dugme_guncelle()
+
     def _gib_aktar(self):
         """GİB'de verilmiş, E-Mükellef sitesine henüz yüklenmemiş beyanname / tahakkukları E-Mükellef masaüstü programıyla aktarır.
         Firma seçimine bağlı değildir: aralıktaki TÜM firmaların yüklenmemiş evrakları (programın kendi işaretlediği) aktarılır.
@@ -3547,6 +3571,12 @@ class Uygulama:
             self._dugme_guncelle()
             if not self.calisiyor:
                 self._luca_elle_surdur()            # işçi meşgulken algılanan elle Luca girişi: bekleyen işlem şimdi sürer
+            if not self.calisiyor and getattr(self, "firma_bilgi_yenile", False):
+                self.firma_bilgi_yenile = False     # firma bilgisi bağlantıları işlem sürerken pasif çizilmişti
+                try:
+                    self.pano_g._cekmece()
+                except Exception:
+                    pass
             if not self.calisiyor and self.toplu and self.toplu.get("gorev_bitti"):
                 self._toplu_sonraki()               # toplu sorgu: sıradaki firma (aynı turda; arada boşta kalınmaz)
             if not self.calisiyor and self.aktar_bekleyen:
@@ -3573,6 +3603,20 @@ class Uygulama:
                 self.toplu["bitis"] = veri          # toplu indirmede firma başına pencere açılmaz; özet sonda
             else:
                 self.kok.after(60, lambda v=veri: self._beyanname_sonucu(v))
+        elif tur == "firma_bilgi_bitti":
+            if not veri.get("otomatik"):
+                self._beyan_bitti()
+                if veri.get("durum") != "tamam":
+                    self.kok.after(60, lambda v=veri: messagebox.showerror("Firma bilgileri", v.get("mesaj") or "bilinmeyen hata",
+                                                                           parent=self.kok))
+                elif veri.get("mesaj"):
+                    self.kok.after(60, lambda v=veri: messagebox.showwarning("Firma bilgileri", "Bilgiler kaydedildi ama " + v["mesaj"],
+                                                                             parent=self.kok))
+            self.firma_bilgi_yenile = True          # çekmece, işçi boşa çıkınca ('calisiyor' False) yeniden çizilir
+            try:
+                self.pano_g._cekmece()
+            except Exception:
+                pass
         elif tur == "aktar_bitti":
             self._beyan_bitti()
             self.aktar_bekleyen, self.aktar_ayar = (veri, self.aktar_ayar or {}), None

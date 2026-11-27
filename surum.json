@@ -1,14 +1,15 @@
 {
-  "surum": "2026.11.27.4",
+  "surum": "2026.11.27.5",
   "paket_en_az": 1,
   "dosyalar": {
     "ayar.py": "769d8fbb6ee41b09ece465ddceeb2ea4b0de88ec31bf57676113c7eaebed3ec9",
     "baslat.pyw": "e4efb3133b7a30d27a8ae144a0ab5b8096c5eb53aa722eb7f5590c16632896f2",
     "birikim.py": "3982a515ebd0408b30ce72d203e91ecbcc045b8d2c01a1fb928ff423159dd811",
-    "cikti.py": "2114b0fa7860c8c0cd047fce1846640160e2081f9870769c38c4b6f48aef4350",
+    "cikti.py": "8949b26e311182c7d4d9f6029b92582d414415147f2d2c06236173767eebd12f",
     "dokum.py": "b8091e533a502c4d88edc9e573756b73d3291a4ee7d2aef6ca2d27bea0a59d80",
     "emk_masaustu.py": "e1844080ad3ceb46da49c8c34e6f8643c6b0b867f9509763bea1027940d084b0",
-    "emukellef.py": "cd2a519386a8033cfe901df195c19b58070fa72db33e34970864fc595ffb5c56",
+    "emukellef.py": "d9d1e02830bbc61d9939fdfa4ddd8df267ca999eee152f7860ce93ff9d6cf816",
+    "firma_bilgi.py": "e18ae2f5a40cf5061d422283dcb804d89c75f990dba9c7946944eec7a5339045",
     "giris_kasasi.py": "dd5548bc6b2a7a4ced92f51935a90c00cbe9337cd1161f01a20afeae20bea992",
     "guncelle.py": "71b75433c720904cf041ca7a1a08ee4b72305696ae622aee2736ba4566fcb27c",
     "kdv_kar.py": "4a9e8a94b32a2acaf8bc6c18930bc536fb832f400c0fc1e6f10e2048b29719e9",
@@ -17,11 +18,11 @@
     "luca.py": "3518db3a04d8868bc6e6cc69b0cd1e9d5c16a7137f61ff8105a50df30de75f33",
     "luca_kasasi.py": "da66957edfd8a6918e3189863564956b232fc1315d6823acecc538c0b8241d3b",
     "luca_sorgu.py": "15ecc2faaf847b3b2fed73c072e9c054eb888a09e097a2e71c70d3261afed678",
-    "onhazirlik.py": "4a7d42545048750dd3764076719eedf17901bf17808485dd117a04419d8568e6",
+    "onhazirlik.py": "3fd653f2bce2f7cb703ac157da8dce2adefffc756d012c48ee62292e02701bd6",
     "ozet.py": "e429b249b384e3166031b904a0a5ae64bb38d7c401dc51d57a7c66b56cf2021e",
-    "pano.py": "b0ec3ae90840046f10ccabbc597387a855955c7e4b0caf5acd892a7e0c4ce637",
+    "pano.py": "4b2a03f7a8c124f31d3c4e99d79e0a9189abea9c1167f7eeb3721983b212b3bf",
     "takip.py": "80217c157211e356208b7eddab081347cb8ac3dcd042c47562d9f4ae0151a4a7",
-    "tarayici.py": "b35d5e0a7d280b1166f0570f8b25f8a92a03762cfe176dcc773c4287290750c3",
+    "tarayici.py": "97a2792457f27f91ffb107a10db5ba17c840488805fe53cfa0c6158a816d3e53",
     "totp_kasasi.py": "cde658b4f3700547573fc007419afffb15319eec87a289f2400cf1dd57589a12"
   }
 }

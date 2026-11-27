@@ -299,7 +299,7 @@ def beyanname_adlari(belgeler):
         b["ek"] = ""
     gruplar = {}
     for b in belgeler:
-        gruplar.setdefault((b["tur"], b["donem_ay"], b["donem_yil"]), []).append(b)
+        gruplar.setdefault((b["tur"], b.get("donem_bas"), b["donem_ay"], b["donem_yil"]), []).append(b)
     for grup in gruplar.values():
         byn = [b for b in grup if b["belge"] == "Beyanname"]
         duz_tarih = {b["tarih"] for b in byn if b["duzeltme"] and b["tarih"]}
@@ -327,7 +327,8 @@ def beyanname_kaydet(firma, klasor, belge, gunluk=print):
         hedef = donem_klasoru(klasor, belge["donem_yil"], belge["donem_ay"], "04_Beyannameler", gunluk=gunluk)
     vkn = f" (VKN {belge['vkn']})" if belge.get("vkn") else ""
     ek = f" {belge['ek']}" if belge.get("ek") else ""
-    ad = temiz_ad(f"{firma} {AYLAR[belge['donem_ay'] - 1]} {belge['donem_yil']} {belge['tur']} {belge['belge']}{ek}{vkn}")
+    aylar = (f"{AYLAR[belge['donem_bas'] - 1]}-" if belge.get("donem_bas") else "") + AYLAR[belge["donem_ay"] - 1]   # 3 aylık: Temmuz-Eylül
+    ad = temiz_ad(f"{firma} {aylar} {belge['donem_yil']} {belge['tur']} {belge['belge']}{ek}{vkn}")
     ayni_mi = _tahakkuk_ayni if belge["belge"] == "Tahakkuk" else _pdf_ayni
     return belge_kaydet(hedef, ad, ".pdf", belge["bayt"], ayni_mi=ayni_mi, gunluk=gunluk)
 

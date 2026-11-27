@@ -11,6 +11,8 @@ import json
 import re
 import threading
 import tkinter as tk
+
+import firma_bilgi
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -735,6 +737,49 @@ class Pano(tk.Frame):
                                 "calisiyor": ("çalışıyor", "mavi"), "bekliyor": ("sırada", "gri"),
                                 "calistirilmadi": ("çalışmadı", "gri")}.get(d, (d, "gri"))
                         self._hap(r, m, b, kalin=False).pack(side="right")
+
+        self._firma_bilgisi(t)
+
+    def _firma_bilgisi(self, t):
+        """Çekmecenin sonunda E-Mükellef/GİB firma bilgileri özeti (Genel\\Firma Bilgileri.md) ve güncelleme bağlantısı."""
+        R, Y, u = self.R, self.YAZI, self.uyg
+        k = tk.Frame(self.cek_ic, bg=R["kart"])
+        k.pack(fill="x", pady=(10, 0))
+        tk.Frame(k, bg=R["cizgi"], height=1).pack(fill="x", pady=(0, 6))
+        bas = tk.Frame(k, bg=R["kart"])
+        bas.pack(fill="x")
+        tk.Label(bas, text="Firma bilgileri", bg=R["kart"], fg=R["yazi"], font=(Y, 9, "bold")).pack(side="left")
+        b = firma_bilgi.oku(t["klasor"]) if t.get("klasor") else None
+        mesgul = bool(u.calisiyor or u.kosu or u.beyan_kosu or u.toplu)
+        def bag(metin, komut):
+            l = tk.Label(bas, text=metin, bg=R["kart"], fg="#9aa7b4" if mesgul else R["mavi"], font=(Y, 8), cursor="" if mesgul else "hand2")
+            l.pack(side="right", padx=(8, 0))
+            if not mesgul:
+                l.bind("<Button-1>", lambda e: komut())
+        bag("↻ GİB'den güncelle", u._firma_bilgi_guncelle)
+        if b:
+            yol = firma_bilgi.klasor(t["klasor"]) / firma_bilgi.MD_ADI
+            bag("Dosyayı aç", lambda: u._ac(yol))
+        if not t.get("klasor"):
+            satirlar, alt = [], "Firma klasörü tanımlı değil."
+        elif not b:
+            satirlar, alt = [], "Henüz alınmadı. 'GİB'den güncelle' ile alınır; sonra firma sorgulanırken ayda bir kendiliğinden yenilenir."
+        else:
+            satirlar = firma_bilgi.ozet_satirlari(b)
+            try:
+                from datetime import datetime as _dt
+                alt = "Güncelleme: " + _dt.fromisoformat(b["guncelleme"]).strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                alt = ""
+        for ad, deger in satirlar:
+            s = tk.Frame(k, bg=R["kart"])
+            s.pack(fill="x", pady=(2, 0))
+            tk.Label(s, text=ad, bg=R["kart"], fg="#6b7b8d", font=(Y, 8), width=12, anchor="nw").pack(side="left", anchor="n")
+            tk.Label(s, text=deger, bg=R["kart"], fg=R["yazi"], font=(Y, 8), anchor="w", justify="left",
+                     wraplength=CEKMECE - 150).pack(side="left", fill="x")
+        if alt:
+            tk.Label(k, text=alt, bg=R["kart"], fg="#8a97a5", font=(Y, 8), anchor="w", justify="left",
+                     wraplength=CEKMECE - 50).pack(fill="x", pady=(4, 0))
 
     def _kisayol_sorgulari(self, tur, kaynak):
         """'hata': son sonucu HATA olanlar; 'eksik': bu dönem için hiç sonucu olmayan ya da çalıştırılmamış kalanlar."""

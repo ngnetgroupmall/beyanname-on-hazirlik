@@ -27,6 +27,7 @@ import cikti
 import dokum
 import emk_masaustu
 import emukellef
+import firma_bilgi
 import kdv_kar
 import luca
 import luca_sorgu
@@ -193,7 +194,8 @@ class Isci:
                             self.iptal_istendi.clear()
                         self._olay("calisiyor", True)
                     try:
-                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname", "kdv_kar_raporu", "rapor_kaydet", "emk_aktar"):
+                        if iptalli and gorev in ("baslat", "tekrar", "verilen_beyanname", "kdv_kar_raporu", "rapor_kaydet", "emk_aktar",
+                                                 "firma_bilgi"):
                             self._log("İşlem başlamadan durduruldu.")
                         else:
                             getattr(self, "_g_" + gorev)(**kw)
@@ -1301,6 +1303,11 @@ class Isci:
         self.son = None                             # yarım kalan önceki çalıştırma artık tekrar edilemez
         self._calistir_kaydet({"secim": secim, "secilen": secilen, "sonuclar": [None] * len(secilen), "deneme": [0] * len(secilen),
                                "dokum_kayitlari": {}, "dosyalar": [], "engel": engel}, list(range(len(secilen))))
+        # firma bilgileri ayda bir kendiliğinden yenilenir (kullanıcı kararı 27.11.2026): E-Mükellef sorgusu çalıştıysa ve oturum açıksa
+        if (any(hizmet(k) == "emukellef" for k, _ in secilen) and self.oturum and not self._iptal_mi()
+                and firma_bilgi.eski_mi(f["klasor"])):
+            self._log(f"Firma bilgileri {firma_bilgi.YENILEME_GUN} günden eski ya da hiç alınmamış; GİB'den güncelleniyor…")
+            self._olay("firma_bilgi_bitti", self._firma_bilgi_yap(f, otomatik=True))
 
     @staticmethod
     def _yabanci_vkn(f, belgeler):
@@ -1355,6 +1362,50 @@ class Isci:
         else:
             self._log(f"HATA: verilen beyanname indirilemedi ({donem}): {bilgi['mesaj']}")
         self._olay("beyanname_bitti", bilgi)
+
+    def _g_firma_bilgi(self, firma):
+        """'Firma bilgilerini güncelle' (pano): E-Mükellef'te GİB'den sorgu + mükellef kartı -> firma klasörüne (Genel) yazılır."""
+        self._log(f"===== {firma['ad']}: firma bilgileri GİB'den güncelleniyor =====")
+        self._olay("firma_bilgi_bitti", self._firma_bilgi_yap(firma))
+
+    def _firma_bilgi_yap(self, f, otomatik=False):
+        """Firma bilgilerini alıp kaydeder; hata vermez -> sonuç sözlüğü (arayüze 'firma_bilgi_bitti' ile gider)."""
+        bilgi = {"firma": f["ad"], "klasor": f["klasor"], "durum": "hata", "mesaj": "", "yol": None, "degisenler": [], "otomatik": otomatik}
+        try:
+            cikti.firma_klasoru(f["klasor"])        # klasör yoksa en başta dur
+            if not f.get("emukellef_id"):
+                raise RuntimeError(f"{f['ad']} için firmalar.json'da emukellef_id yok.")
+            if not otomatik:                        # otomatik yenilemede oturum az önceki sorgularla biliniyor (toplu akış bozulmasın)
+                if not self._acik_mi():
+                    self._tarayici_baslat(False)
+                    self._log("Tarayıcı arka planda açıldı.")
+                self.oturum = emukellef.oturum_var_mi(self.ctx)
+                self._durum_bildir()
+                if not self.oturum:
+                    raise RuntimeError("E-Mükellef'e giriş yapılmamış. Giriş yapıp yeniden deneyin.")
+            self._log("E-Mükellef: GİB'den sorgulanıyor (vergi dairesi, vergi türleri, e-defter, NACE, ortak/yönetici, sicil)…")
+            b = firma_bilgi.topla(self.ctx, f["emukellef_id"], beklenen_vkn=f.get("vkn", ""), iptal=self._iptal_mi)
+            fv = re.sub(r"\D", "", str(f.get("vkn") or ""))
+            kv = re.sub(r"\D", "", str(b["kimlik"].get("VKN / TCKN") or ""))
+            if fv and kv and fv != kv:              # başka mükellefin kartı geldiyse hiçbir şey yazılmaz
+                raise RuntimeError(f"E-Mükellef başka VKN'li mükellef kartı döndürdü ({kv}; firmanın numarası {fv}). Kaydedilmedi.")
+            yol, degisen = firma_bilgi.kaydet(f["klasor"], b, f["ad"])
+            sorunlu = ([x for x in b["gib_sorgusu"] if x["durum"] == "hata"]
+                       or ([] if b["gib_basarili"] else [{"baslik": "GİB sorgusu", "mesaj": "sonuç alınamadı"}]))
+            bilgi.update(durum="tamam", yol=str(yol), degisenler=degisen,
+                         mesaj=(f"{len(sorunlu)} GİB sorgusu hata verdi: " + ", ".join(x["baslik"] for x in sorunlu)) if sorunlu else "")
+            self._log(f"Firma bilgileri kaydedildi: {yol}" + (f" — {len(degisen)} değişiklik (dosyada)" if degisen else ""))
+            for x in sorunlu:
+                self._log(f"UYARI: GİB sorgusu ({x['baslik']}): {x['mesaj'][:200]}")
+        except emukellef.OturumYok as e:
+            self.oturum = False
+            self._durum_bildir()
+            bilgi["mesaj"] = str(e)
+        except Exception as e:
+            bilgi["mesaj"] = (str(e).splitlines()[0] if str(e) else type(e).__name__)[:400]
+        if bilgi["durum"] != "tamam":
+            self._log(f"HATA: firma bilgileri alınamadı: {bilgi['mesaj']}")
+        return bilgi
 
     def _g_emk_aktar(self, tarih_bas, tarih_bit, sgk=True, yalniz_listele=False):
         """'GİB'den E-Mükellef'e aktar' düğmesi (kullanıcı isteği 25.11.2026): E-Mükellef masaüstü programını sürerek GİB'de verilmiş,

@@ -812,8 +812,12 @@ def beyanname_tahakkuk(ctx, mid, ay, yil, iptal=lambda: False, vergiler=None, od
                 raise ValueError("Beyanname satırı beklenen yapıda değil")
             tur_metin, donem = _html_metin(h[2]), _html_metin(h[3])
             tur, belge = _beyan_tur(tur_metin)
-            dm = re.fullmatch(r"(\d{2})/(\d{4})", donem)
-            if yalniz_donem is not None and dm and (int(dm.group(1)), int(dm.group(2))) != tuple(yalniz_donem):
+            # dönem 'AA/YYYY' ya da 3 aylık beyanda 'AA-AA/YYYY' (27.11.2026: Asensan MUHSGK '07-09/2026'); 3 aylıkta dönem ayı son aydır
+            dm = re.fullmatch(r"(?:(\d{2})-)?(\d{2})/(\d{4})", donem)
+            d_bas, d_ay, d_yil = (int(dm.group(1)) if dm.group(1) else None, int(dm.group(2)), int(dm.group(3))) if dm else (None, 0, 0)
+            if dm and not (1 <= d_ay <= 12 and (d_bas is None or 1 <= d_bas <= d_ay)):
+                dm = None                           # geçersiz ay: tanınmadı sayılır
+            if yalniz_donem is not None and dm and (d_ay, d_yil) != tuple(yalniz_donem):
                 continue                            # aynı ödeme ayındaki başka dönemin belgesi: istenmedi
             m = re.search(r'href="([^"]*goruntule[^"]*)"', h[2]) or re.search(r'href="([^"]*goruntule[^"]*)"', " ".join(h))
             tutar = _tr_sayi(_html_metin(h[4]))
@@ -828,7 +832,7 @@ def beyanname_tahakkuk(ctx, mid, ay, yil, iptal=lambda: False, vergiler=None, od
             p = _get(ctx, sayfa, adres)
             bayt = p.body()
             if p.status == 200 and bayt[:5] == b"%PDF-":
-                belgeler.append({"tur": tur, "belge": belge, "donem_ay": int(dm.group(1)), "donem_yil": int(dm.group(2)),
+                belgeler.append({"tur": tur, "belge": belge, "donem_ay": d_ay, "donem_yil": d_yil, "donem_bas": d_bas,
                                  "vkn": vkn, "bayt": bayt, "tutar": tutar})
                 durum = "indirildi"
             else:
