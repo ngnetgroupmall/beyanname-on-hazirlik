@@ -1479,13 +1479,16 @@ class Uygulama:
 
     def _kok_goster(self):
         """Üst banttaki kayıt klasörü yazısı (tıklanınca değiştirilir)."""
+        if self.kok_yolu is not None and self._kok_var():
+            self.kok_yazi.pack_forget()              # sorun yok: yol 'Ayarlar' menüsünde görünür
+            return
         if self.kok_yolu is None:
-            metin, renk = "Kayıt klasörü seçilmedi — seçmek için tıklayın", "#f0b43c"
+            metin = "Kayıt klasörü seçilmedi — seçmek için tıklayın"
         else:
             yol = str(self.kok_yolu)
-            kisa = yol if len(yol) <= 44 else yol[:14] + "…" + yol[-28:]
-            metin, renk = (f"Kayıt klasörü: {kisa}", "#c6d3e4") if self._kok_var() else (f"Kayıt klasörüne erişilemiyor: {kisa}", "#f0b43c")
-        self.kok_yazi.configure(text=metin, fg=renk)
+            metin = "Kayıt klasörüne erişilemiyor: " + (yol if len(yol) <= 44 else yol[:14] + "…" + yol[-28:])
+        self.kok_yazi.configure(text=metin, fg="#f0b43c")
+        self.kok_yazi.pack(side="left", padx=(0, 10), after=self.ust_baslik)
 
     def _kok_penceresi(self):
         if self.kok_yolu is None or not self._kok_var():
@@ -1515,7 +1518,7 @@ class Uygulama:
                 return False
         else:
             messagebox.showinfo("Kayıt klasörü", "Firma dosyalarının kaydedileceği ANA klasörü seçin.\n\nİçinde her firmanın kendi klasörü "
-                                "olur (ör. D:\\Firmalar). Sonradan üstteki 'Kayıt klasörü' yazısına tıklayarak değiştirebilirsiniz.",
+                                "olur (ör. D:\\Firmalar). Sonradan üstteki 'Ayarlar' menüsünden değiştirebilirsiniz.",
                                 parent=self.kok)
         return self._kok_sec()
 
@@ -1580,18 +1583,19 @@ class Uygulama:
         ust = tk.Frame(self.kok, bg=R["lacivert"], height=54)
         ust.pack(fill="x")
         ust.pack_propagate(False)
-        tk.Label(ust, text=PROGRAM_ADI, bg=R["lacivert"], fg="white", font=(YAZI, 13, "bold")).pack(side="left", padx=(18, 12))
-        self.kok_yazi = tk.Label(ust, text="", bg=R["lacivert"], fg="#c6d3e4", font=(YAZI, 9), cursor="hand2")
-        self.kok_yazi.pack(side="left")
+        self.ust_baslik = tk.Label(ust, text=PROGRAM_ADI, bg=R["lacivert"], fg="white", font=(YAZI, 13, "bold"))
+        self.ust_baslik.pack(side="left", padx=(18, 12))
+        # kayıt klasörü ve E-Mükellef adresi 'Ayarlar' menüsündedir (kullanıcı isteği 27.11.2026: bant sade kalsın);
+        # klasör seçilmemiş / erişilemiyorsa uyarı yazısı yine bantta görünür (_kok_goster)
+        self.kok_yazi = tk.Label(ust, text="", bg=R["lacivert"], fg="#f0b43c", font=(YAZI, 9), cursor="hand2")
         self.kok_yazi.bind("<Button-1>", lambda e: self._kok_penceresi())
-        self.adres_yazi = tk.Label(ust, text="", bg=R["lacivert"], fg="#c6d3e4", font=(YAZI, 9), cursor="hand2")
-        self.adres_yazi.pack(side="left", padx=(10, 0))
-        self.adres_yazi.bind("<Button-1>", lambda e: self._adres_degistir())
-        self._adres_goster()
         self.b_gorunum = tk.Button(ust, text="", command=self._gorunum_degistir, relief="flat", bd=0, bg="#e8eef6", fg=R["lacivert"],
                                    activebackground="white", activeforeground=R["lacivert"], font=(YAZI, 9, "bold"), padx=10, pady=3,
                                    cursor="hand2")
-        self.b_gorunum.pack(side="left", padx=(16, 0))
+        self.b_gorunum.pack(side="left", padx=(4, 0))
+        self.b_ayar = tk.Button(ust, text="⚙  Ayarlar", command=self._ayar_menusu, relief="flat", bd=0, bg="#2d4d78", fg="white",
+                                activebackground="#3a5f90", activeforeground="white", font=(YAZI, 9), padx=10, pady=3, cursor="hand2")
+        self.b_ayar.pack(side="left", padx=(8, 0))
         self.b_tarayici = tk.Button(ust, text="Tarayıcıyı göster", command=lambda: self.tarayici_goster(not self.gorunur), relief="flat", bd=0,
                                     bg="#2d4d78", fg="white", activebackground="#3a5f90", activeforeground="white", font=(YAZI, 9),
                                     padx=10, pady=3, cursor="hand2")
@@ -1611,9 +1615,24 @@ class Uygulama:
         self.luca_nokta.pack(side="right", padx=(0, 6))
         self.luca_nokta_no = self.luca_nokta.create_oval(1, 1, 11, 11, fill="#9aa3af", outline="")
 
-    def _adres_goster(self):
-        sunucu = emukellef.ADRES.replace("https://", "")
-        self.adres_yazi.configure(text=f"·  E-Mükellef: {sunucu.removesuffix('.' + ayar.EMUKELLEF_ALANI)}")
+    def _ayar_menusu(self):
+        """Üst banttaki 'Ayarlar' düğmesinin menüsü: seyrek değişen ayarlar ve sık açılan yerler."""
+        if not hasattr(self, "ayar_menu"):          # tek menü nesnesi: her açılışta içeriği yenilenir (birikmesin)
+            self.ayar_menu = tk.Menu(self.kok, tearoff=0, font=(YAZI, 9))
+        menu = self.ayar_menu
+        menu.delete(0, "end")
+        yol = str(self.kok_yolu) if self.kok_yolu is not None else "seçilmedi"
+        ofis = emukellef.ADRES.replace("https://", "").removesuffix("." + ayar.EMUKELLEF_ALANI)
+        menu.add_command(label=f"Kayıt klasörü: {yol}   —   değiştir…", command=self._kok_penceresi)
+        menu.add_command(label=f"E-Mükellef adresi: {ofis}   —   değiştir…", command=self._adres_degistir)
+        menu.add_separator()
+        menu.add_command(label="Kayıt klasörünü aç", command=lambda: self._ac(self.kok_yolu),
+                         state="normal" if self._kok_var() else "disabled")
+        menu.add_command(label="Günlük dosyasını aç", command=lambda: self._ac(GUNLUK))
+        try:
+            menu.tk_popup(self.b_ayar.winfo_rootx(), self.b_ayar.winfo_rooty() + self.b_ayar.winfo_height() + 2)
+        finally:
+            menu.grab_release()
 
     def _adres_degistir(self):
         """E-Mükellef adresini (ofisi) değiştirir. Adres çalışırken değişmez: ayar yazılır ve program kapanır.
@@ -1653,7 +1672,7 @@ class Uygulama:
 
     def _durum_goster(self):
         if self.emk is True:
-            renk, metin = "#35c46a", f"E-Mükellef: giriş yapıldı · {self.onbellek_adet} mükellef" if self.onbellek_adet else "E-Mükellef: giriş yapıldı"
+            renk, metin = "#35c46a", "E-Mükellef: bağlı"
         elif self.emk is False:
             renk, metin = "#e8a317", "E-Mükellef: giriş gerekli" + (" — açılan tarayıcıda giriş yapın" if self.gorunur else "")
         else:
@@ -1749,48 +1768,35 @@ class Uygulama:
         self.onceki_alt = tk.Frame(self.onceki_kutu, bg=R["yok_z"], height=5)
         self.onceki_alt.pack(fill="x")
 
-        # 3) seçenekler
-        dis, k = kart(sol)
-        dis.pack(fill="x", pady=(10, 0))
-        baslik(k, "SEÇENEKLER", 3).pack(anchor="w", pady=(0, 5))
-        ks = self.kayitli_secim or {}
-        self.earsiv_gib = tk.BooleanVar(value=ks.get("earsiv_gib", True))
-        self.pdf = tk.BooleanVar(value=ks.get("pdf", False))       # varsayılan: yalnız XML (kullanıcı kararı 18.11.2026)
-        for metin, v in (("Önce GİB'den yeniden sorgula (önerilir, daha yavaş)", self.earsiv_gib),
-                         ("Fatura PDF'lerini de indir (XML her zaman iner)", self.pdf)):
-            tk.Checkbutton(k, text=metin, variable=v, bg=R["kart"], activebackground=R["kart"], font=(YAZI, 9), anchor="w",
-                           bd=0, highlightthickness=0).pack(fill="x")
-
-        # büyük düğme (çerçeve = kenarlık rengi: Başlat'ta yeşil, Durdur'da kırmızı)
+        # (3 numaralı SEÇENEKLER kartı kaldırıldı — 27.11.2026: sol sütun taşıyordu; onay kutuları İNDİRİLECEKLER kartında)
+        # alt düğmeler (27.11.2026): Başlat tam genişlikte (yazısı kesiliyordu); üstünde üç eşit ikincil düğme
         alt_dugmeler = tk.Frame(sol, bg=R["zemin"])
         alt_dugmeler.pack(side="bottom", fill="x", before=ilk_kart)          # yer daralırsa kartlar kısalır, düğmeler kaybolmaz
-        # ikincil düğme (kullanıcı isteği 20.11.2026): beyanname verildikten sonra yalnız verilen beyannameyi indirir
-        self.beyan_cerceve = tk.Frame(alt_dugmeler, bg=R["lacivert"])
-        self.beyan_cerceve.pack(side="right", fill="y", padx=(8, 0))
-        self.b_beyan = tk.Button(self.beyan_cerceve, text="Verilen beyannameyi\nindir", command=self._verilen_indir, relief="flat", bd=0,
-                                 cursor="hand2", font=(YAZI, 9, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
-                                 activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], padx=9, justify="center")
-        self.b_beyan.pack(fill="both", expand=True, padx=1, pady=1)
-        # GİB'den E-Mükellef'e aktarma (kullanıcı isteği 25.11.2026): E-Mükellef masaüstü programı sürülür (emk_masaustu.py)
-        self.aktar_cerceve = tk.Frame(alt_dugmeler, bg=R["lacivert"])
-        self.aktar_cerceve.pack(side="right", fill="y", padx=(8, 0))
-        self.b_aktar = tk.Button(self.aktar_cerceve, text="GİB'den\naktar", command=self._gib_aktar, relief="flat", bd=0,
-                                 cursor="hand2", font=(YAZI, 9, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
-                                 activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], padx=9, justify="center")
-        self.b_aktar.pack(fill="both", expand=True, padx=1, pady=1)
+        # çerçeve = kenarlık rengi: Başlat'ta yeşil, Durdur'da kırmızı
         self.basla_cerceve = tk.Frame(alt_dugmeler, bg=R["yesil"])
-        self.basla_cerceve.pack(side="left", fill="both", expand=True)
+        self.basla_cerceve.pack(side="bottom", fill="x")
         self.b_basla = tk.Button(self.basla_cerceve, text="", command=self._baslat_durdur, relief="flat", bd=0, cursor="hand2",
                                  font=(YAZI, 13, "bold"), bg=R["yesil"], fg="white", activebackground="#22994a",
                                  activeforeground="white", disabledforeground="#cfe8d6", pady=9)
         self.b_basla.pack(fill="x", padx=2, pady=2)
+        ikincil = tk.Frame(alt_dugmeler, bg=R["zemin"])
+        ikincil.pack(side="bottom", fill="x", pady=(0, 6))
+
+        def ikincil_dugme(sutun, metin, komut):
+            c = tk.Frame(ikincil, bg=R["lacivert"])
+            c.grid(row=0, column=sutun, sticky="nsew", padx=(0 if sutun == 0 else 6, 0))
+            ikincil.grid_columnconfigure(sutun, weight=1, uniform="ikincil")
+            b = tk.Button(c, text=metin, command=komut, relief="flat", bd=0, cursor="hand2", font=(YAZI, 8, "bold"), bg=R["kart"],
+                          fg=R["lacivert"], activebackground=R["secili_z"], activeforeground=R["lacivert"],
+                          disabledforeground=R["acik_gri"], padx=2, pady=4)
+            b.pack(fill="both", expand=True, padx=1, pady=1)
+            return c, b
         # KDV ve kâr/zarar raporu (kullanıcı isteği 20.11.2026): Luca mizanları + kebirden ekranda rapor; PDF / Excel kaydedilebilir
-        self.rapor_cerceve = tk.Frame(sol, bg=R["lacivert"])
-        self.rapor_cerceve.pack(side="bottom", fill="x", before=ilk_kart, pady=(0, 6))
-        self.b_rapor = tk.Button(self.rapor_cerceve, text="KDV ve kâr / zarar raporu", command=self._kdvkar_raporu, relief="flat", bd=0,
-                                 cursor="hand2", font=(YAZI, 10, "bold"), bg=R["kart"], fg=R["lacivert"], activebackground=R["secili_z"],
-                                 activeforeground=R["lacivert"], disabledforeground=R["acik_gri"], pady=5)
-        self.b_rapor.pack(fill="x", padx=1, pady=1)
+        self.rapor_cerceve, self.b_rapor = ikincil_dugme(0, "Kâr / zarar raporu", self._kdvkar_raporu)
+        # GİB'den E-Mükellef'e aktarma (kullanıcı isteği 25.11.2026): E-Mükellef masaüstü programı sürülür (emk_masaustu.py)
+        self.aktar_cerceve, self.b_aktar = ikincil_dugme(1, "GİB'den aktar", self._gib_aktar)
+        # verilen beyannameyi indir (kullanıcı isteği 20.11.2026): seçili firma ve dönem için
+        self.beyan_cerceve, self.b_beyan = ikincil_dugme(2, "Beyannameyi indir", self._verilen_indir)
 
     # ------------------------------------------------------------ sağ sütun
     def _sag_sutun(self, sag):
@@ -1813,6 +1819,17 @@ class Uygulama:
         self.b_kayit_sil.pack(side="left", padx=(0, 8))
         self.kayit_yazi = tk.Label(h2, text="", bg=R["kart"], fg=R["acik_gri"], font=(YAZI, 8))
         self.kayit_yazi.pack(side="left")
+        # seçenekler (27.11.2026'ya kadar sol sütunda ayrı karttı)
+        h3 = tk.Frame(k, bg=R["kart"])
+        h3.pack(fill="x", pady=(5, 0))
+        tk.Label(h3, text="Seçenekler:", bg=R["kart"], fg=R["gri"], font=(YAZI, 8)).pack(side="left", padx=(0, 6))
+        ks = self.kayitli_secim or {}
+        self.earsiv_gib = tk.BooleanVar(value=ks.get("earsiv_gib", True))
+        self.pdf = tk.BooleanVar(value=ks.get("pdf", False))       # varsayılan: yalnız XML (kullanıcı kararı 18.11.2026)
+        for metin, v in (("Önce GİB'den yeniden sorgula (önerilir)", self.earsiv_gib),      # kısa yazı: dar pencerede kırpılmasın
+                         ("Fatura PDF'lerini de indir", self.pdf)):
+            tk.Checkbutton(h3, text=metin, variable=v, bg=R["kart"], activebackground=R["kart"], font=(YAZI, 9), anchor="w",
+                           bd=0, highlightthickness=0).pack(side="left", padx=(0, 14))
         il = tk.Frame(k, bg=R["kart"])
         il.pack(fill="x", pady=(8, 2))
         self.il_sure = tk.Label(il, text="", bg=R["kart"], fg=R["yok"], font=(YAZI, 9))
@@ -1846,7 +1863,6 @@ class Uygulama:
             tk.Checkbutton(bas, text=ad.upper(), variable=gv, command=lambda n=no: self._grup_sec(n), bg=R["kart"], fg=R["lacivert"],
                            activebackground=R["kart"], activeforeground=R["lacivert"], font=(YAZI, 8, "bold"), bd=0,
                            highlightthickness=0, anchor="w").pack(side="left")
-            tk.Label(bas, text=f"{len(anahtarlar)} sorgu", bg=R["kart"], fg=R["acik_gri"], font=(YAZI, 8)).pack(side="right")
             tk.Frame(s, bg=R["cizgi"], height=1).pack(fill="x", pady=(1, 2))
             for a in anahtarlar:
                 r = tk.Frame(s, bg=R["kart"])
@@ -2502,8 +2518,7 @@ class Uygulama:
         A = cikti.AYLAR
         bu, onc, ode = f"{A[ay - 1]} {yil}", f"{A[p_ay - 1]} {p_yil}", f"{A[o_ay - 1]} {o_yil}"
         self.donem_yazi.configure(text=bu)
-        self.b_beyan.configure(text=f"Verilen beyannameyi\nindir · {bu}")
-        self.donem_ipucu.configure(text=f"Önceki dönem beyannamesi: {onc} · KDV2 ödeme ayı: {ode}")
+        self.donem_ipucu.configure(text=f"Önceki dönem: {onc} · KDV2 ödeme ayı: {ode}")
         kapsam = {"beyan": onc, "muhsgk": f"{A[p_ay - 1]} – {A[ay - 1]}", "sgk6661": f"{yil - 1} – {yil}" if ay == 1 else f"{yil} yılı", "efatura_gelen": bu, "efatura_giden": bu, "earsiv": bu,
                   "earsiv_giden": bu, "adina": "çapraz kontrol", "iptal_itiraz": f"{A[ay - 1]} – {A[o_ay - 1]}",
                   "kdv2": f"ödeme ayı {A[o_ay - 1]}", "s109": f"{A[ay - 1]} – {A[o_ay - 1]}", "alindi": f"{A[ay - 1]} – {A[o_ay - 1]}",

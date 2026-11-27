@@ -10,6 +10,7 @@ aynı Başlat/Durdur, aynı toplu işler). Veriler yalnız OKUNUR: önceki indir
 import json
 import re
 import threading
+import time
 import tkinter as tk
 
 import firma_bilgi
@@ -25,6 +26,7 @@ P = {"yesil": ("#1e7a45", "#e3f4ea"), "koyu": ("#ffffff", "#1e8e4e"), "gri": ("#
 SUTUNLAR = [("Firma", 185), ("Veriler", 150), ("Faturalar", 72), ("Luca", 58), ("KDV2", 76), ("MUHSGK", 80), ("KDV1", 76),
             ("Uyarı", 120), ("Son indirme", 92)]
 CEKMECE = 400                                  # sağ çekmecenin genişliği (piksel)
+ARA_IPUCU = "Firma ara  (Ctrl+F)"
 
 
 def vade(tur, ay, yil):
@@ -107,6 +109,8 @@ def satir_oku(oh, t, ay, yil, kok):
             s["sonuclar"] = {a: o["durum"] for a, o in (v.get("sonuclar") or {}).items()}
             s["acil"] = [oh.KISA_AD.get(a, a) for a, o in (v.get("sonuclar") or {}).items() if o.get("acil")]
             s["fatura"], s["son"] = v.get("fatura") or 0, v.get("son") or ""
+            s["donem_klasoru"] = str(v.get("donem_klasoru") or "") if v.get("donem_var") else ""
+            s["ozet"] = str(v.get("ozet") or "")
             firma_k = oh.cikti.firma_klasoru(t["klasor"])
             pdf = _beyan_pdfleri(firma_k, ay, yil)
             takip = _takip(v.get("donem_klasoru") or firma_k / "KDV" / f"{yil}-{ay:02d}", ay, yil)
@@ -149,19 +153,29 @@ class Pano(tk.Frame):
         self._kucuk_dugme(d, "▸", lambda: self.uyg._donem_kaydir(1)).pack(side="left")
         self.vade_f = tk.Frame(ust, bg=R["zemin"])
         self.vade_f.pack(side="left", padx=(16, 0))
-        self.kpi_f = tk.Frame(self, bg=R["zemin"])
-        self.kpi_f.pack(fill="x", padx=14, pady=(10, 0))
-        self.kpi = []
-        for n in range(5):
-            k = tk.Frame(self.kpi_f, bg=R["kart"], highlightthickness=1, highlightbackground=R["cizgi"])
-            k.grid(row=0, column=n, sticky="we", padx=(0 if n == 0 else 10, 0))
-            self.kpi_f.grid_columnconfigure(n, weight=1, uniform="kpi")
-            sayi = tk.Label(k, text="", bg=R["kart"], font=(Y, 20, "bold"))
-            sayi.pack(side="left", padx=(12, 8), pady=6)
-            yazi = tk.Label(k, text="", bg=R["kart"], fg=R["gri"], font=(Y, 9), justify="left", anchor="w")
-            yazi.pack(side="left", fill="x")
-            self.kpi.append((k, sayi, yazi))
-
+        # firma arama (kullanıcı isteği 27.11.2026): sık listede olmayan firma da panodan seçilir (Klasik ekrana geçmeden)
+        ac = tk.Frame(ust, bg=R["dugme_k"])
+        ac.pack(side="right")
+        self.ara = tk.Entry(ac, relief="flat", bd=0, font=(Y, 10), width=22, bg=R["kart"], fg="#9aa6b2", insertbackground=R["yazi"])
+        self.ara.pack(padx=1, pady=1, ipady=3, ipadx=5)
+        self.ara.insert(0, ARA_IPUCU)
+        self.ara_ipuclu, self.ara_bulunan = True, []
+        self.ara_liste = tk.Listbox(self, exportselection=False, activestyle="none", relief="flat", bd=0, highlightthickness=1,
+                                    highlightbackground="#9fbde4", highlightcolor="#9fbde4", font=(Y, 9),
+                                    selectbackground=R["secili_z"], selectforeground=R["yazi"])
+        self.ara.bind("<FocusIn>", lambda e: self._ara_ipucu(False))
+        self.ara.bind("<FocusOut>", lambda e: self.after(200, self._ara_birak))
+        self.ara.bind("<KeyRelease>", self._ara_suz)
+        self.ara.bind("<Return>", lambda e: self._ara_sec())
+        self.ara.bind("<Escape>", lambda e: self._ara_temizle())
+        self.ara.bind("<Down>", lambda e: self._ara_gez(1))
+        self.ara.bind("<Up>", lambda e: self._ara_gez(-1))
+        self.ara_liste.bind("<ButtonRelease-1>", lambda e: self._ara_sec())
+        self.ara_liste.bind("<Escape>", lambda e: self._ara_kapat())
+        self.ara_liste.bind("<FocusOut>", lambda e: self.after(200, self._ara_birak))
+        self.uyg.kok.bind_all("<Control-f>", self._ara_odak, add="+")
+        self.uyg.kok.bind_all("<F5>", self._f5, add="+")
+        # (sayaç kartları kaldırıldı — kullanıcı isteği 27.11.2026: aynı sayılar süzgeç düğmelerinde var)
         ana = tk.Frame(self, bg=R["zemin"])
         ana.pack(fill="both", expand=True, padx=14, pady=10)
         # ---- tablo kartı
@@ -265,6 +279,96 @@ class Pano(tk.Frame):
         self._filtre_ciz()
         self.donem_degisti()
 
+    # ------------------------------------------------------------ firma arama
+    def _ana_pencerede(self):
+        try:
+            o = self.focus_get()
+        except (KeyError, tk.TclError):
+            return False
+        return o is None or o.winfo_toplevel() is self.uyg.kok
+
+    def _ara_odak(self, e=None):
+        self.uyg.son_etkinlik = time.time()          # bu bağlama genel <Key> bağlamasını gölgeler: etkinlik burada işlenir
+        if not self._ana_pencerede():
+            return
+        (self.ara if self.winfo_ismapped() else self.uyg.ara).focus_set()
+        return "break"
+
+    def _f5(self, e=None):
+        self.uyg.son_etkinlik = time.time()
+        if self.winfo_ismapped() and self._ana_pencerede():
+            self.donem_degisti()                    # vade sayaçları da yenilenir (gün değişmiş olabilir); tabloyu yeniden okur
+
+    def _ara_ipucu(self, goster):
+        if goster and not self.ara.get():
+            self.ara.insert(0, ARA_IPUCU)
+            self.ara.configure(fg="#9aa6b2")
+            self.ara_ipuclu = True
+        elif not goster and self.ara_ipuclu:
+            self.ara.delete(0, "end")
+            self.ara.configure(fg=self.R["yazi"])
+            self.ara_ipuclu = False
+
+    def _ara_birak(self):
+        try:
+            odak = self.focus_get()
+        except (KeyError, tk.TclError):
+            odak = None
+        if odak in (self.ara, self.ara_liste):
+            return
+        self.ara_liste.place_forget()
+        self._ara_ipucu(True)
+
+    def _ara_temizle(self):
+        self.ara.delete(0, "end")
+        self.ara_bulunan = []
+        self.ara_liste.place_forget()
+
+    def _ara_suz(self, e=None):
+        if e is not None and e.keysym in ("Down", "Up", "Return", "Escape"):
+            return
+        parcalar = [] if self.ara_ipuclu else self.oh.norm(self.ara.get().strip()).split()
+        self.ara_bulunan = [t for t in self.uyg.tum if all(p in t["anahtar"] for p in parcalar)][:8] if parcalar else []
+        self.ara_liste.delete(0, "end")
+        if not parcalar:
+            self.ara_liste.place_forget()
+            return
+        for t in self.ara_bulunan:
+            self.ara_liste.insert("end", "  " + t["goster"])
+        if not self.ara_bulunan:
+            self.ara_liste.insert("end", "  Eşleşen firma yok")
+        else:
+            self.ara_liste.selection_set(0)
+        self.ara_liste.configure(height=max(1, len(self.ara_bulunan)))
+        gen = 440                                   # kutu sağda: liste pencereden taşmasın diye sola doğru açılır
+        x = min(self.ara.winfo_rootx() - self.winfo_rootx() - 1, self.winfo_width() - gen - 14)
+        self.ara_liste.place(x=max(0, x), y=self.ara.winfo_rooty() - self.winfo_rooty() + self.ara.winfo_height() + 3, width=gen)
+        self.ara_liste.lift()
+
+    def _ara_gez(self, yon):
+        if not self.ara_bulunan:
+            return "break"
+        s = self.ara_liste.curselection()
+        n = max(0, min(len(self.ara_bulunan) - 1, (s[0] if s else -1) + yon))
+        self.ara_liste.selection_clear(0, "end")
+        self.ara_liste.selection_set(n)
+        return "break"
+
+    def _ara_kapat(self):
+        self._ara_temizle()
+        self.tuval.focus_set()                      # odak kutudan/listeden çıkar: ipucu yazısı geri gelir
+        self._ara_ipucu(True)
+
+    def _ara_sec(self):
+        if not self.ara_bulunan:                    # 'Eşleşen firma yok' satırına tıklandı ya da boşken Enter
+            if self.ara_liste.winfo_ismapped():
+                self._ara_kapat()
+            return
+        s = self.ara_liste.curselection()
+        t = self.ara_bulunan[s[0] if s and s[0] < len(self.ara_bulunan) else 0]
+        self._ara_kapat()
+        self.uyg._firma_sec(t["id"])
+
     def _dugme(self, ust, metin, komut, dolu=False):
         """Çerçeveli düğme: dönen Frame'in .d'si asıl düğmedir (pack/grid Frame'e yapılır, state .d'ye)."""
         R = self.R
@@ -313,9 +417,19 @@ class Pano(tk.Frame):
         self.donem_l.configure(text=f"{self.oh.cikti.AYLAR[ay - 1]} {yil}")
         for w in self.vade_f.winfo_children():
             w.destroy()
+        bugun = date.today()
         for tur in BEYAN_TURLERI:
-            f = tk.Label(self.vade_f, text=f"{tur} son gün  {_gun(vade(tur, ay, yil))}", bg="#1f3756", fg="white", font=(self.YAZI, 9),
-                         padx=9, pady=4)
+            v = vade(tur, ay, yil)
+            kalan = (v - bugun).days                 # kalan gün (kullanıcı isteği 27.11.2026); geçen vade soluk, yaklaşan sarı
+            if kalan < 0:
+                ek, zemin, yazi = "geçti", "#e6ebf0", "#6b7b8d"
+            elif kalan == 0:
+                ek, zemin, yazi = "BUGÜN", "#b42318", "white"
+            elif kalan <= 3:
+                ek, zemin, yazi = f"{kalan} gün kaldı", "#fdf1dc", "#9a6408"
+            else:
+                ek, zemin, yazi = f"{kalan} gün kaldı", "#1f3756", "white"
+            f = tk.Label(self.vade_f, text=f"{tur}  ·  {_gun(v)}  ·  {ek}", bg=zemin, fg=yazi, font=(self.YAZI, 9), padx=9, pady=4)
             f.pack(side="left", padx=(0, 6))
         if self.okunan_donem != (ay, yil):
             self.satirlar = {}
@@ -436,24 +550,6 @@ class Pano(tk.Frame):
         toplam = len(self.oh.SORGULAR)
         return sum(1 for d in x["sonuclar"].values() if d in ("veri", "kayit_yok")), toplam
 
-    def _kpi_ciz(self):
-        R, s = self.R, self._sayilar()
-        ay, yil = self.uyg.ay_no, self.uyg.yil_no
-        yakin = sorted(b[0] for x in self.satirlar.values() for b in x["beyan"].values() if b[2] and b[1] == "sari")
-        degerler = [(s["firma"], f"sık kullanılan firma\n{self.oh.cikti.AYLAR[ay - 1]} {yil}", R["yazi"], False),
-                    (s["tam"], "firmanın verileri\nhatasız indirilmiş", R["yesil"], False),
-                    (s["bekleyen"], "beyan bekliyor" + ("\n(Beyanname Takip verisinden)" if s["bekleyen"] else "\nTakip verisi olan firmalarda"), R["sari"], False),
-                    (s["acil"], "firmada ACİL uyarı", R["kirmizi"], bool(s["acil"])),
-                    (s["hata"], "firmada hatalı sorgu", R["yazi"], False)]
-        for (k, sayi, yazi), (n, metin, renk, vurgu) in zip(self.kpi, degerler):
-            zemin = "#fff6f5" if vurgu else R["kart"]
-            for w in (k, sayi, yazi):
-                w.configure(bg=zemin)
-            k.configure(highlightbackground="#ebb0a9" if vurgu else R["cizgi"])
-            sayi.configure(text=str(n), fg=renk)
-            yazi.configure(text=metin)
-        _ = yakin
-
     def _gorunur_satirlar(self):
         sira = [t["id"] for t in self._sik_firmalar()]
         cikis = []
@@ -491,7 +587,6 @@ class Pano(tk.Frame):
         self._satir_vurgula()
         self._canli_hucre()
         self._filtre_ciz()
-        self._kpi_ciz()
         self._cekmece()
 
     def _satir(self, r, x):
@@ -629,10 +724,23 @@ class Pano(tk.Frame):
             self.cek_alt.configure(text=f"VKN {t.get('vkn') or '—'}\n" + (f"Klasör: {t['klasor']}\\KDV\\{yil}-{ay:02d}" if t.get("klasor")
                                                                         else "Klasör tanımlı değil (Başlat'ta sorulur)"))
             x = self.satirlar.get(t["id"]) or {}
-            self._hap(self.cek_roz, "Klasör tanımlı" if t.get("klasor") else "Klasör yok", "yesil" if t.get("klasor") else "sari").pack(side="left", padx=(0, 5))
-            self._hap(self.cek_roz, "Luca tanımlı" if t.get("luca") else "Luca tanımsız", "yesil" if t.get("luca") else "gri").pack(side="left", padx=(0, 5))
-            if x.get("son"):
-                self._hap(self.cek_roz, "Son: " + x["son"][:5] + " " + x["son"][11:16], "mavi", kalin=False).pack(side="left")
+            # yalnız sorun rozet olur (kullanıcı isteği 27.11.2026); 'tanımlı' ve 'son indirme' (tabloda var) yazılmaz
+            if not t.get("klasor"):
+                self._hap(self.cek_roz, "Klasör yok", "sari").pack(side="left", padx=(0, 5))
+            if not t.get("luca"):
+                self._hap(self.cek_roz, "Luca tanımsız", "gri").pack(side="left", padx=(0, 5))
+            donem_k = x.get("donem_klasoru")
+            if not x and t.get("klasor"):            # sık listede olmayan firma (aramayla seçildi): satırı yok, klasöre doğrudan bakılır
+                try:
+                    aday = self.oh.cikti.firma_klasoru(t["klasor"]) / "KDV" / f"{yil}-{ay:02d}"
+                    donem_k = str(aday) if aday.is_dir() else ""
+                except OSError:
+                    donem_k = ""
+            for metin, hedef in (("Dönem klasörünü aç", donem_k), ("Kontrol Özeti", x.get("ozet"))):
+                if hedef:
+                    b = tk.Label(self.cek_roz, text=metin, bg=R["kart"], fg=R["mavi"], font=(Y, 9, "underline"), cursor="hand2")
+                    b.pack(side="left", padx=(0, 12))
+                    b.bind("<Button-1>", lambda e, h=hedef: u._ac(h))
         self._cekmece_gruplar()
         self.dugmeler()
 
